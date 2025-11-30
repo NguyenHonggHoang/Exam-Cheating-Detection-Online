@@ -1,0 +1,79 @@
+# =============================
+# General OS files
+# =============================
+.DS_Store
+Thumbs.db
+
+# =============================
+# IDE / Editor files
+# =============================
+.idea/
+*.iml
+.vscode/
+*.sublime-workspace
+*.sublime-project
+
+# =============================
+# Java / Spring Boot / Gradle / Maven
+# =============================
+# Gradle
+.gradle/
+build/
+# Maven
+target/
+# Spring Boot
+*.log
+*.class
+*.jar
+*.war
+*.ear
+# Optional: ignore generated sources
+generated-sources/
+
+# =============================
+# Node / React / Next.js
+# =============================
+# Node modules
+node_modules/
+# npm logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+# Environment files
+.env
+.env.*
+# Build output
+build/
+# Next.js specific
+.next/
+out/
+# React specific (if using create-react-app)
+public/static/
+# Optional: coverage reports
+coverage/
+
+# =============================
+# Docker
+# =============================
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# =============================
+# Miscellaneous
+# =============================
+# Logs
+*.log
+# Temporary files
+*.tmp
+*.swp
+# IDE specific
+*.project
+*.classpath
+*.settings/
+
+
+.agent/*
+.github/*
+
+docs/

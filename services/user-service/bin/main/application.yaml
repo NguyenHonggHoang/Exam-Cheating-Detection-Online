@@ -1,0 +1,38 @@
+server:
+  port: 8100
+
+spring:
+  application:
+    name: user-service
+
+  datasource:
+    url: ${UMS_DB_URL:jdbc:postgresql://localhost:55432/identity_db}
+    username: ${UMS_DB_USERNAME:postgres}
+    password: ${UMS_DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AS_ISSUER_URI:http://localhost:9000}
+          jwk-set-uri: ${AS_JWK_SET_URI:http://localhost:9000/oauth2/jwks}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.examplatform.identity: INFO
+

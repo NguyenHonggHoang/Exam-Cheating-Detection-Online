@@ -1,0 +1,47 @@
+server:
+  port: 9000
+
+spring:
+  application:
+    name: authorization-server
+  datasource:
+    url: ${OAUTH_DB_URL:jdbc:postgresql://localhost:55432/identity_db}
+    username: ${OAUTH_DB_USERNAME:postgres}
+    password: ${OAUTH_DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: true
+  sql:
+    init:
+      mode: never
+
+app:
+  auth:
+    issuer: ${AS_ISSUER_URI:http://localhost:9000}
+    cors:
+      allowed-origins: ${AS_ALLOWED_ORIGINS:http://localhost:5173}
+    bff-client:
+      client-id: ${BFF_CLIENT_ID:exam-bff-client}
+      client-secret: ${BFF_CLIENT_SECRET:exam-bff-secret}
+      redirect-uri: ${BFF_REDIRECT_URI:http://localhost:8080/login/oauth2/code/exam-oidc}
+    spa-client:
+      client-id: ${SPA_CLIENT_ID:react-test-client}
+      redirect-uri: ${SPA_REDIRECT_URI:http://localhost:5173/auth/callback}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+    com.example.authserver: DEBUG
+
+

@@ -1,0 +1,59 @@
+server:
+  port: 8081
+
+security:
+  require-auth: true
+
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:55432/session_db
+    username: postgres
+    password: postgres
+    hikari:
+      # Force connection session timezone to UTC to avoid invalid aliases like "Asia/Saigon"
+      data-source-properties:
+        options: -c TimeZone=UTC
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        jdbc:
+          'time_zone': UTC
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
+    repair-on-migrate: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://localhost:9000/oauth2/jwks}
+      client:
+        registration:
+          internal-client:  # Must match REGISTRATION_ID in OAuth2FeignRequestInterceptor
+            provider: auth-server
+            client-id: ${SERVICE_CLIENT_ID:session-service-client}
+            client-secret: ${SERVICE_CLIENT_SECRET:session-service-secret}
+            authorization-grant-type: client_credentials
+            scope: internal.read,internal.write
+        provider:
+          auth-server:
+            token-uri: ${AUTH_SERVER_TOKEN_URI:http://localhost:9000/oauth2/token}
+
+# Service URLs for inter-service communication
+services:
+  user-service:
+    url: ${USER_SERVICE_URL:http://localhost:8100}
+
+# CORS (cho FE local) - Allow all localhost ports for dev
+cors:
+  allowed-origins: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177"
+
+# Media storage
+# media.upload-dir is read via @Value with default; keep here commented for reference
+# media:
+#   upload-dir: ${MEDIA_UPLOAD_DIR:/app/uploads}
+
