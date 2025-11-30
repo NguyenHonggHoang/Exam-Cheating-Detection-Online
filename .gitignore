@@ -77,3 +77,12 @@ docker-compose.yml
 .github/*
 
 docs/
+
+# Ignore build output
+bin/
+build/
+target/
+out/
+
+# Ignore Gradle wrapper jar
+**/gradle/wrapper/gradle-wrapper.jar
