@@ -134,10 +134,14 @@ export const authOptions = {
     },
 
     async session({ session, token }) {
-      session.user = token.user;
-      session.accessToken = token.accessToken;
-      session.idToken = token.idToken;
-      session.error = token.error;
+      session.user.id = token.sub;
+
+      session.user.roles = token.user?.roles || token.roles || [];
+
+      if (token.error) {
+        session.error = token.error;
+      }
+      
       return session;
     },
     async signOut({ token }) {
@@ -152,12 +156,18 @@ export const authOptions = {
 
     async redirect({ url, baseUrl }) {
       const authServerIssuer = process.env.AUTH_SERVER_ISSUER || "http://localhost:9000";
+      const frontendUrl = process.env.REACT_CLIENT_URL || "http://localhost:5173";
       if (url.startsWith(authServerIssuer)) {
         return url;
       }
-      if (url.includes('/login')) {
+      if (url.startsWith("/")) {
+        return new URL(url, baseUrl).toString();
+      }
+
+      if (url.startsWith(frontendUrl)) {
         return url;
       }
+
       return baseUrl;
     },
   },

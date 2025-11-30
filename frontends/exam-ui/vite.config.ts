@@ -1,22 +1,44 @@
+// frontends/exam-ui/vite.config.ts
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@': '/src'
-    }
+      '@': path.resolve(__dirname, './src'),
+    },
   },
   server: {
     port: 5173,
     proxy: {
-      // Forward /api requests to Spring Boot backend
       '/api': {
+        target: 'http://localhost:8080', 
+        changeOrigin: true,
+        secure: false,
+        cookieDomainRewrite: 'localhost', 
+      },
+      '/sessions': {
         target: 'http://localhost:8080',
-        changeOrigin: true
-      }
-    }
-  }
+        changeOrigin: true,
+        secure: false,
+      },
+      '/ingest': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/incidents': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        secure: false,
+      },
+       '/admin': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
 });

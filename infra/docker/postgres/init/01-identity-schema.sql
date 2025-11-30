@@ -200,16 +200,20 @@ INSERT INTO oauth2_registered_client (
     'exam-bff-client-seed-id',
     'exam-bff-client',
     CURRENT_TIMESTAMP,
-    '{noop}exam-bff-secret', -- exam-bff-secret
+    '{noop}exam-bff-secret',
     'Exam BFF Client',
     'client_secret_basic',
     'refresh_token,authorization_code',
-    'http://localhost:8080/api/auth/callback/exam-oidc',
-    'http://localhost:5173/login',
-    'openid,profile,exam.read,exam.write',
-    '{"@class":"java.util.Collections$UnmodifiableMap","settings.client.require-proof-key":false,"settings.client.require-authorization-consent":true}',
-    '{"@class":"java.util.Collections$UnmodifiableMap","settings.token.reuse-refresh-tokens":false,"settings.token.id-token-signature-algorithm":["org.springframework.security.oauth2.jose.jws.SignatureAlgorithm","RS256"],"settings.token.access-token-time-to-live":["java.time.Duration",900.000000000],"settings.token.access-token-format":{"@class":"org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat","value":"self-contained"},"settings.token.refresh-token-time-to-live":["java.time.Duration",43200.000000000],"settings.token.authorization-code-time-to-live":["java.time.Duration",300.000000000],"settings.token.device-code-time-to-live":["java.time.Duration",300.000000000]}'
-) ON CONFLICT (client_id) DO NOTHING;
+    'http://localhost:8080/api/auth/callback/exam-oidc', 
+    'http://localhost:5173/login,http://localhost:5173', 
+    'openid,profile,exam.read,exam.write,offline_access', 
+    '{"@class":"java.util.Collections$UnmodifiableMap","settings.client.require-proof-key":true,"settings.client.require-authorization-consent":false}', 
+    '{"@class":"java.util.Collections$UnmodifiableMap","settings.token.reuse-refresh-tokens":true,"settings.token.id-token-signature-algorithm":["org.springframework.security.oauth2.jose.jws.SignatureAlgorithm","RS256"],"settings.token.access-token-time-to-live":["java.time.Duration",300.000000000],"settings.token.access-token-format":{"@class":"org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat","value":"self-contained"},"settings.token.refresh-token-time-to-live":["java.time.Duration",86400.000000000],"settings.token.authorization-code-time-to-live":["java.time.Duration",300.000000000],"settings.token.device-code-time-to-live":["java.time.Duration",300.000000000]}'
+) ON CONFLICT (client_id) 
+DO UPDATE SET 
+    scopes = EXCLUDED.scopes,
+    client_settings = EXCLUDED.client_settings,
+    post_logout_redirect_uris = EXCLUDED.post_logout_redirect_uris;
 
 -- Register Session Service as Client
 INSERT INTO oauth2_registered_client (

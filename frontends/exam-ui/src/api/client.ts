@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import type {
-  LoginRequest,
+  LoginRequest, 
   LoginResponse,
   StartSessionRequest,
   StartSessionResponse,
@@ -17,6 +17,8 @@ import type {
 
 const API_BASE_URL = '/api/proxy';
 
+const AUTH_BASE_URL = '/api/auth';
+
 class ApiClient {
   private client: AxiosInstance;
 
@@ -26,40 +28,97 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
-      withCredentials: true,
+      withCredentials: true, 
     });
 
+    this.setupInterceptors();
+  }
+
+  private setupInterceptors() {
     this.client.interceptors.response.use(
       (response) => response,
       (error: AxiosError<ApiError>) => {
-        if (error.response?.status === 401 && error.config?.url?.includes('/api/auth/userinfo')) {
-          console.log('[ApiClient] Userinfo returned 401, redirecting to login');
-          window.location.href = '/api/auth/login';
+        if (error.response?.status === 401) {
+          console.warn('[ApiClient] Session expired or unauthorized. Redirecting to login...');
+          
+          if (!window.location.pathname.includes('/auth/signin')) {
+
+             window.location.href = `${AUTH_BASE_URL}/signin/exam-oidc?callbackUrl=${encodeURIComponent(window.location.href)}`;
+          }
         }
         return Promise.reject(error);
       }
     );
   }
 
-  async login(): Promise<void> {
-    const callbackUrl = window.location.origin;
-    window.location.href = `/api/auth/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
-  }
 
-  async logout(): Promise<void> {
-    const response = await axios.post('/api/auth/logout');
-    if (response.data?.redirectUrl) {
-      window.location.href = response.data.redirectUrl;
+  async login(): Promise<void> {
+    try {
+      const csrfResponse = await axios.get('/api/auth/csrf');
+      const csrfToken = csrfResponse.data.csrfToken;
+
+      const callbackUrl = window.location.href;
+      const targetUrl = '/api/auth/signin/exam-oidc';
+
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = targetUrl;
+
+
+      const csrfInput = document.createElement('input');
+      csrfInput.type = 'hidden';
+      csrfInput.name = 'csrfToken';
+      csrfInput.value = csrfToken;
+      form.appendChild(csrfInput);
+
+
+      const callbackInput = document.createElement('input');
+      callbackInput.type = 'hidden';
+      callbackInput.name = 'callbackUrl';
+      callbackInput.value = callbackUrl;
+      form.appendChild(callbackInput);
+
+      document.body.appendChild(form);
+      form.submit();
+      
+    } catch (error) {
+      console.error("Login flow error:", error);
+      window.location.href = '/api/auth/signin/exam-oidc';
     }
   }
 
+  async logout(): Promise<void> {
+    try {
+      const response = await axios.get('/api/auth/federated-logout');
+      const logoutUrl = response.data.url;
+
+      await axios.post('/api/auth/signout', {
+        csrfToken: await this.getCsrfToken() 
+      });
+      
+      window.location.href = logoutUrl;
+
+    } catch (error) {
+      console.error("Logout error:", error);
+
+      window.location.href = '/api/auth/signout';
+    }
+  }
+
+  private async getCsrfToken() {
+     const res = await axios.get('/api/auth/csrf');
+     return res.data.csrfToken;
+  }
+
+
   async register(data: any): Promise<any> {
-    // Public endpoint - doesn't require authentication
-    const response = await axios.post('/api/register', data);
+    const response = await axios.post('/api/register', data, {
+      headers: { 'Content-Type': 'application/json' }
+    });
     return response.data;
   }
 
-  // Session endpoints
   async startSession(request: StartSessionRequest): Promise<StartSessionResponse> {
     const response = await this.client.post<StartSessionResponse>('/sessions/start', request);
     return response.data;
@@ -74,7 +133,6 @@ class ApiClient {
     return response.data;
   }
 
-  // Ingest endpoints
   async uploadSnapshots(request: SnapshotUploadRequest): Promise<void> {
     await this.client.post('/ingest/snapshots/upload', request);
   }
@@ -83,7 +141,6 @@ class ApiClient {
     await this.client.post('/ingest/events', request);
   }
 
-  // Incidents endpoints
   async getIncidents(params?: {
     examId?: string;
     sessionId?: string;
@@ -104,7 +161,6 @@ class ApiClient {
     await this.client.post(`/incidents/${incidentId}/review`, request);
   }
 
-  // Admin endpoints
   async getExamStats(examId: string): Promise<ExamStats> {
     const response = await this.client.get<ExamStats>('/admin/stats', {
       params: { examId },
@@ -124,5 +180,5 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient();
-export const axiosInstance = apiClient['client'] as AxiosInstance;
+export const axiosInstance = apiClient['client'] as AxiosInstance; 
 export default apiClient;

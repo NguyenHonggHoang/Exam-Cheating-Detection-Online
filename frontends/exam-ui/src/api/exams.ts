@@ -12,17 +12,12 @@ export interface Exam {
   createdAt: string;
 }
 
-export interface ExamsResponse {
-  exams: Exam[];
-}
-
 export const examsApi = {
   /**
    * Get all exams, optionally filtered by status
    */
   async getAll(status?: 'ACTIVE' | 'ENDED' | 'UPCOMING'): Promise<Exam[]> {
     const params = status ? { status } : {};
-    // axiosInstance already has baseURL '/api/proxy', so we use relative path
     const response = await axiosInstance.get<Exam[]>('/api/exams', { params });
     return response.data;
   },
