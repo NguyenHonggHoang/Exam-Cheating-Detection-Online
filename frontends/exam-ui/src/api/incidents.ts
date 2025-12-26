@@ -1,15 +1,50 @@
 import { axiosInstance } from './client';
 
+/**
+ * Incident Types aligned with backend
+ */
+export type IncidentType =
+  | 'MULTIPLE_FACES'
+  | 'NO_FACE'
+  | 'LOOKING_AWAY'
+  | 'TAB_SWITCH'
+  | 'PASTE'
+  | 'BLUR'
+  | 'FOCUS'
+  | 'DEVICE_CHANGE'
+  | 'BROWSER_EXTENSION'
+  | 'ANSWER_BEHAVIOR_ANOMALY'
+  | 'SCREENSHOT_ATTEMPT'
+  | 'USER_IDLE'
+  | 'BEHAVIOR_ANALYSIS';
+
+export type IncidentSeverity = 'LOW' | 'MEDIUM' | 'HIGH';
+export type IncidentStatus = 'PENDING' | 'UNDER_REVIEW' | 'REVIEWED' | 'DISMISSED' | 'ESCALATED';
+export type ReviewDecision = 'VALID' | 'FALSE_POSITIVE' | 'ESCALATED' | 'INCONCLUSIVE';
+
 export interface Incident {
   id: string;
   sessionId: string;
-  ts: number;
-  type: 'TAB_ABUSE' | 'NO_FACE' | 'MULTI_FACE' | 'PASTE_DETECTED' | 'UNAUTHORIZED_DEVICE';
-  score: number;
-  reason: string;
+  examId?: string;
+  type: IncidentType;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
   evidenceUrl: string | null;
-  status: 'OPEN' | 'CONFIRMED' | 'REJECTED';
-  createdAt: string;
+  objectKey?: string;
+  fileSize?: number;
+  detectedBy: 'FRONTEND_AI' | 'SERVER_AI' | 'PROCTOR';
+  detectedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  consecutiveCount?: number;
+  firstDetectedAt?: string;
+  metadata?: Record<string, any>; // Flexible metadata for detailed analysis
+}
+
+export interface IncidentDetailed extends Incident {
+  examId?: string;
+  userId?: string;
+  sessionStatus?: string;
 }
 
 export interface PaginatedIncidents {
@@ -20,40 +55,136 @@ export interface PaginatedIncidents {
   number: number;
 }
 
+export interface IncidentSummary {
+  totalIncidents: number;
+  pendingIncidents: number;
+  reviewedIncidents: number;
+  dismissedIncidents: number;
+  lowSeverityCount: number;
+  mediumSeverityCount: number;
+  highSeverityCount: number;
+}
+
+export interface Review {
+  id: string;
+  incidentId: string;
+  reviewedBy: string;
+  decision: ReviewDecision;
+  notes?: string;
+  reviewedAt: string;
+  createdAt: string;
+}
+
+export interface CreateReviewRequest {
+  reviewedBy: string;
+  decision: ReviewDecision;
+  notes?: string;
+}
+
+/**
+ * Incident Service API
+ * 
+ * Endpoints moved from Session Service to Incident Service
+ */
 export const incidentsApi = {
   /**
-   * Get incidents, optionally filtered by sessionId with pagination
+   * List incidents with filtering and pagination
+   * 
+   * @param params Filter parameters
    */
-  async getAll(params?: {
+  async list(params?: {
     sessionId?: string;
+    examId?: string;
+    severity?: IncidentSeverity;
+    status?: IncidentStatus;
     page?: number;
     size?: number;
     sort?: string;
-  }): Promise<Incident[] | PaginatedIncidents> {
-    const response = await axiosInstance.get<Incident[] | PaginatedIncidents>('/api/incidents', { params });
+  }): Promise<PaginatedIncidents> {
+    // Use proxy endpoint - BFF handles routing to incident-service
+    const response = await axiosInstance.get<PaginatedIncidents>('/incidents', { params });
     return response.data;
   },
 
   /**
-   * Get a specific incident by ID
+   * Get incident details with session context
    */
-  async getById(incidentId: string): Promise<Incident> {
-    const response = await axiosInstance.get<Incident>(`/api/incidents/${incidentId}`);
+  async getById(incidentId: string): Promise<IncidentDetailed> {
+    const response = await axiosInstance.get<IncidentDetailed>(`/incidents/${incidentId}`);
     return response.data;
   },
 
   /**
-   * Create a new incident (usually done by system)
+   * Update incident status
    */
-  async create(data: {
+  async updateStatus(incidentId: string, status: IncidentStatus, notes?: string): Promise<Incident> {
+    const response = await axiosInstance.patch<Incident>(
+      `/incidents/${incidentId}/status`,
+      { status, notes }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get incident summary statistics
+   */
+  async getSummary(params?: {
+    sessionId?: string;
+    examId?: string;
+  }): Promise<IncidentSummary> {
+    const response = await axiosInstance.get<IncidentSummary>('/incidents/summary', { params });
+    return response.data;
+  },
+
+  /**
+   * Create review for incident
+   */
+  async createReview(incidentId: string, request: CreateReviewRequest): Promise<Review> {
+    const response = await axiosInstance.post<Review>(
+      `/incidents/${incidentId}/reviews`,
+      request
+    );
+    return response.data;
+  },
+
+  /**
+   * Get reviews for incident
+   */
+  async getReviews(incidentId: string): Promise<Review[]> {
+    const response = await axiosInstance.get<Review[]>(`/incidents/${incidentId}/reviews`);
+    return response.data;
+  },
+
+  /**
+   * Send client-side detection event (creates incident)
+   * Routes through BFF proxy which adds auth token
+   */
+  async sendClientEvent(event: {
     sessionId: string;
-    ts: number;
-    type: Incident['type'];
-    score: number;
-    reason: string;
+    eventType: string;
+    violationType: IncidentType;
+    violationState?: string;
     evidenceUrl?: string;
-  }): Promise<Incident> {
-    const response = await axiosInstance.post<Incident>('/api/incidents', data);
-    return response.data;
+    objectKey?: string;
+    fileSize?: number;
+    timestamp: number;
+    source?: string;
+    detectionResult?: {
+      faceCount: number;
+      confidence: number;
+      headPose?: { pitch: number; yaw: number; roll: number };
+      eyeState?: { leftEyeOpen: boolean; rightEyeOpen: boolean };
+      timestamp: number;
+    };
+    consecutiveCount?: number;
+    firstDetectedAt?: number;
+    metadata?: Record<string, unknown>;  // Additional metadata (e.g., egress info)
+  }): Promise<void> {
+    // Use proxy endpoint - BFF handles routing to incident-service
+    await axiosInstance.post('/incident/client-event', event);
   }
 };
+
+// Legacy export for backward compatibility
+export const getIncidentsBySession = (sessionId: string) =>
+  incidentsApi.list({ sessionId });

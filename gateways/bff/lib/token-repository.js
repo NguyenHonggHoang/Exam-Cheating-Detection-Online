@@ -61,10 +61,14 @@ export const TokenRepository = {
       const encryptedToken = TokenRepository.encrypt(refreshToken);
 
       const query = `
-        INSERT INTO refresh_tokens (user_id, encrypted_token, updated_at)
-        VALUES ($1, $2, NOW())
+        INSERT INTO refresh_tokens (user_id, encrypted_token, updated_at, last_activity_at, session_expires_at, created_at)
+        VALUES ($1::varchar, $2::text, NOW(), NOW(), NOW() + INTERVAL '24 hours', COALESCE((SELECT created_at FROM refresh_tokens WHERE user_id = $1::varchar), NOW()))
         ON CONFLICT (user_id) 
-        DO UPDATE SET encrypted_token = $2, updated_at = NOW()
+        DO UPDATE SET 
+          encrypted_token = $2::text, 
+          updated_at = NOW(),
+          last_activity_at = NOW(),
+          session_expires_at = COALESCE(EXCLUDED.session_expires_at, (SELECT created_at FROM refresh_tokens WHERE user_id = $1::varchar) + INTERVAL '24 hours')
       `;
 
       await db.query(query, [userId, encryptedToken]);
@@ -78,7 +82,7 @@ export const TokenRepository = {
   async getRefreshToken(userId) {
     try {
       const db = initializePool();
-      const query = 'SELECT encrypted_token FROM refresh_tokens WHERE user_id = $1';
+      const query = 'SELECT encrypted_token, last_activity_at, session_expires_at FROM refresh_tokens WHERE user_id = $1';
       const result = await db.query(query, [userId]);
 
       if (result.rows.length === 0) {
@@ -86,9 +90,15 @@ export const TokenRepository = {
         return null;
       }
 
-      const encryptedToken = result.rows[0].encrypted_token;
+      const row = result.rows[0];
+      const encryptedToken = row.encrypted_token;
       try {
-        return TokenRepository.decrypt(encryptedToken);
+        const refreshToken = TokenRepository.decrypt(encryptedToken);
+        return {
+          token: refreshToken,
+          lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).getTime() : null,
+          sessionExpiresAt: row.session_expires_at ? new Date(row.session_expires_at).getTime() : null
+        };
       } catch (decryptError) {
         console.error(`[TokenRepository] Failed to decrypt token for user ${userId}, deleting corrupted token`);
         await TokenRepository.deleteRefreshToken(userId);
@@ -109,6 +119,64 @@ export const TokenRepository = {
     } catch (error) {
       console.error('[TokenRepository] Error deleting refresh token:', error);
       throw error;
+    }
+  },
+
+  async updateLastActivity(userId) {
+    try {
+      const db = initializePool();
+      const query = `
+        UPDATE refresh_tokens 
+        SET last_activity_at = NOW() 
+        WHERE user_id = $1
+      `;
+      await db.query(query, [userId]);
+    } catch (error) {
+      console.error('[TokenRepository] Error updating last activity:', error);
+      // Don't throw - this is not critical
+    }
+  },
+
+  async checkSessionTimeout(userId) {
+    try {
+      const db = initializePool();
+      const query = `
+        SELECT last_activity_at, session_expires_at 
+        FROM refresh_tokens 
+        WHERE user_id = $1
+      `;
+      const result = await db.query(query, [userId]);
+
+      if (result.rows.length === 0) {
+        return { valid: false, reason: 'NoSession' };
+      }
+
+      const row = result.rows[0];
+      const now = Date.now();
+      
+      // Check absolute session timeout (24 hours)
+      if (row.session_expires_at) {
+        const sessionExpiresAt = new Date(row.session_expires_at).getTime();
+        if (now > sessionExpiresAt) {
+          return { valid: false, reason: 'SessionExpired' };
+        }
+      }
+
+      // Check idle timeout (30 minutes)
+      if (row.last_activity_at) {
+        const lastActivityAt = new Date(row.last_activity_at).getTime();
+        const idleTimeout = 30 * 60 * 1000; // 30 minutes in milliseconds
+        const idleTime = now - lastActivityAt;
+        
+        if (idleTime > idleTimeout) {
+          return { valid: false, reason: 'IdleTimeout' };
+        }
+      }
+
+      return { valid: true };
+    } catch (error) {
+      console.error('[TokenRepository] Error checking session timeout:', error);
+      return { valid: false, reason: 'Error' };
     }
   },
 

@@ -3,26 +3,48 @@ import { Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider } from '../auth/AuthContext';
 import ProtectedRoute from '../components/ProtectedRoute';
 import DashboardLayout from '../layouts/DashboardLayout';
-import LoginPage from './LoginPage';
 import LoginPageNew from './LoginPageNew';
 import RegisterPage from './RegisterPage';
 
 import DashboardPage from './DashboardPage';
 import UnauthorizedPage from './UnauthorizedPage';
 
-// Demo pages (legacy)
-import StartSessionPage from './StartSessionPage';
-import IngestDemoPage from './IngestDemoPage';
-import IncidentsPage from './IncidentsPage';
-import ReviewPage from './ReviewPage';
+// Examples (for reference/reuse)
+// import { ExamPageExample } from './ExamPageExample';
+// import { SecureExamPageExample } from './SecureExamPageExample';
 
-// Week 2: Mock Exam
+// Active: Mock Exam
 import { MockExamPage } from './MockExamPage';
+
+// Profile & Exam Queue
+import { ProfileCompletionPage } from './ProfileCompletionPage';
+import { ExamQueueSnapshotPage } from './ExamQueueSnapshotPage';
+import { ExamWaitingRoom } from './ExamWaitingRoom';
+
+// Proctor Dashboard (New)
+import { ProctorDashboard } from './ProctorDashboard';
 
 // Candidate pages
 import { ExamsPage } from './roles/ExamsPage';
 import { MyResultsPage } from './roles/MyResultsPage';
 import { MyViolationsPage } from './roles/MyViolationsPage';
+import { StudentStartExamPage } from './roles/StudentStartExamPage';
+
+// Admin pages
+import { AdminExamsPage } from './roles/AdminExamsPage';
+import { AdminCreateExamPage } from './roles/AdminCreateExamPage';
+import { AdminUsersPage } from './roles/AdminUsersPage';
+import { AdminSystemPage } from './roles/AdminSystemPage';
+import { AdminViolationsPage } from './roles/AdminViolationsPage';
+
+// Proctor role pages
+import ProctorActiveExamsPage from './roles/ProctorActiveExamsPage';
+import ProctorViolationsPage from './roles/ProctorViolationsPage';
+import ProctorDashboardRole from './roles/ProctorDashboard';
+import ProctorVideoAnalysisPage from './roles/ProctorVideoAnalysisPage';
+import ProctorVideoAnalysisListPage from './roles/ProctorVideoAnalysisListPage';
+import ProctorBehaviorAnalysisPage from './roles/ProctorBehaviorAnalysisPage';
+import ProctorBehaviorAnalysisListPage from './roles/ProctorBehaviorAnalysisListPage';
 
 
 
@@ -32,7 +54,6 @@ const App: React.FC = () => {
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<LoginPageNew />} />
-        <Route path="/login-legacy" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
 
         <Route path="/unauthorized" element={<UnauthorizedPage />} />
@@ -49,47 +70,8 @@ const App: React.FC = () => {
           }
         />
 
-        {/* Legacy demo pages (wrapped in layout) */}
-        <Route
-          path="/demo/start-session"
-          element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <StartSessionPage />
-              </DashboardLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/demo/ingest"
-          element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <IngestDemoPage />
-              </DashboardLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/demo/incidents"
-          element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <IncidentsPage />
-              </DashboardLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/demo/review"
-          element={
-            <ProtectedRoute>
-              <DashboardLayout>
-                <ReviewPage />
-              </DashboardLayout>
-            </ProtectedRoute>
-          }
-        />
+
+
 
         {/* Candidate routes */}
         <Route
@@ -106,10 +88,75 @@ const App: React.FC = () => {
           path="/exams"
           element={<Navigate to="/candidate/exams" replace />}
         />
+        {/* Profile completion (after first login) */}
+        <Route
+          path="/profile/complete"
+          element={
+            <ProtectedRoute>
+              <ProfileCompletionPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Exam queue snapshot (face verification before exam) */}
+        <Route
+          path="/exam/:examId/verify"
+          element={
+            <ProtectedRoute skipProfileCheck>
+              <ExamQueueSnapshotPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Exam Landing / Start Page */}
+        <Route
+          path="/exams/:examId/start"
+          element={
+            <ProtectedRoute skipProfileCheck>
+              <StudentStartExamPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Waiting room after verification */}
+        <Route
+          path="/exam/:examId/waiting-room"
+          element={
+            <ProtectedRoute skipProfileCheck>
+              <ExamWaitingRoom />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Calibration page removed - detection uses relaxed default thresholds */}
+
+        {/* Actual exam page - uses state-based question navigation */}
+        <Route
+          path="/exam-start/:examId"
+          element={
+            <ProtectedRoute skipProfileCheck>
+              <MockExamPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Legacy route redirect - in case old URL is used */}
+        <Route
+          path="/exam-start/:examId/question/:questionIndex"
+          element={
+            <ProtectedRoute skipProfileCheck>
+              <MockExamPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Secure exam example removed - see SecureExamPageExample.tsx for reference */}
+
+        {/* Redirect mock-exam URL directly to exam-start */}
         <Route
           path="/mock-exam/:examId"
           element={
-            <MockExamPage />
+            <Navigate to="/exam-start/:examId" replace />
           }
         />
         <Route
@@ -143,53 +190,61 @@ const App: React.FC = () => {
 
         {/* Admin routes */}
         <Route
-          path="/admin/manage-exams"
+          path="/admin/exams"
           element={
             <ProtectedRoute allowedRoles={['ADMIN']}>
               <DashboardLayout>
-                <div style={{ padding: 24, background: 'white', borderRadius: 8 }}>
-                  <h2>📚 Quản lý kỳ thi</h2>
-                  <p>Trang quản lý kỳ thi đang được phát triển...</p>
-                </div>
+                <AdminExamsPage />
               </DashboardLayout>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/admin/exam-statistics"
+          path="/admin/exams/create"
           element={
             <ProtectedRoute allowedRoles={['ADMIN']}>
               <DashboardLayout>
-                <div style={{ padding: 24, background: 'white', borderRadius: 8 }}>
-                  <h2>📈 Thống kê</h2>
-                  <p>Trang thống kê đang được phát triển...</p>
-                </div>
+                <AdminCreateExamPage />
               </DashboardLayout>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/admin/all-violations"
+          path="/admin/exams/:examId"
           element={
             <ProtectedRoute allowedRoles={['ADMIN']}>
               <DashboardLayout>
-                <div style={{ padding: 24, background: 'white', borderRadius: 8 }}>
-                  <h2>⚠️ Tất cả vi phạm</h2>
-                  <p>Trang quản lý vi phạm đang được phát triển...</p>
-                </div>
+                <AdminCreateExamPage />
               </DashboardLayout>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/admin/system-settings"
+          path="/admin/users"
           element={
             <ProtectedRoute allowedRoles={['ADMIN']}>
               <DashboardLayout>
-                <div style={{ padding: 24, background: 'white', borderRadius: 8 }}>
-                  <h2>⚙️ Cài đặt hệ thống</h2>
-                  <p>Trang cài đặt đang được phát triển...</p>
-                </div>
+                <AdminUsersPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/system"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN']}>
+              <DashboardLayout>
+                <AdminSystemPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/incidents"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN']}>
+              <DashboardLayout>
+                <AdminViolationsPage />
               </DashboardLayout>
             </ProtectedRoute>
           }
@@ -201,10 +256,7 @@ const App: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER']}>
               <DashboardLayout>
-                <div style={{ padding: 24, background: 'white', borderRadius: 8 }}>
-                  <h2>📝 Kỳ thi đang mở</h2>
-                  <p>Trang kỳ thi đang mở đang được phát triển...</p>
-                </div>
+                <ProctorActiveExamsPage />
               </DashboardLayout>
             </ProtectedRoute>
           }
@@ -214,24 +266,69 @@ const App: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER']}>
               <DashboardLayout>
-                <div style={{ padding: 24, background: 'white', borderRadius: 8 }}>
-                  <h2>🚨 Danh sách vi phạm</h2>
-                  <p>Trang danh sách vi phạm đang được phát triển...</p>
-                </div>
+                <ProctorViolationsPage />
               </DashboardLayout>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/proctor/live-monitoring"
+          path="/proctor"
           element={
             <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER']}>
               <DashboardLayout>
-                <div style={{ padding: 24, background: 'white', borderRadius: 8 }}>
-                  <h2>📹 Giám sát trực tiếp</h2>
-                  <p>Trang giám sát trực tiếp đang được phát triển...</p>
-                </div>
+                <ProctorDashboardRole />
               </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/proctor/video-analysis"
+          element={
+            <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER']}>
+              <DashboardLayout>
+                <ProctorVideoAnalysisListPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/proctor/behavior-analysis"
+          element={
+            <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER']}>
+              <DashboardLayout>
+                <ProctorBehaviorAnalysisListPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/proctor/video-analysis/:incidentId"
+          element={
+            <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER']}>
+              <DashboardLayout>
+                <ProctorVideoAnalysisPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/proctor/behavior-analysis/:sessionId"
+          element={
+            <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER']}>
+              <DashboardLayout>
+                <ProctorBehaviorAnalysisPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+
+
+        {/* Proctor Dashboard - Real-time exam monitoring */}
+        <Route
+          path="/proctor/dashboard/:examId"
+          element={
+            <ProtectedRoute allowedRoles={['PROCTOR', 'REVIEWER', 'ADMIN']}>
+              <ProctorDashboard />
             </ProtectedRoute>
           }
         />

@@ -27,7 +27,11 @@ spring:
             scope: internal.read,internal.write
         provider:
           spring:
-            issuer-uri: ${AS_ISSUER_URI:http://localhost:9000}
+            issuer-uri: ${AS_ISSUER_URI:http://localhost:9090}
+      resourceserver:
+        jwt:
+          issuer-uri: ${AS_ISSUER_URI:http://localhost:9090}
+          jwk-set-uri: ${AS_JWK_SET_URI:http://localhost:9090/oauth2/jwks}
     
 
 management:

@@ -14,10 +14,10 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080', 
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
         secure: false,
-        cookieDomainRewrite: 'localhost', 
+        cookieDomainRewrite: 'localhost',
       },
       '/sessions': {
         target: 'http://localhost:8080',
@@ -34,10 +34,16 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
-       '/admin': {
+      '/admin': {
         target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false,
+      },
+      // WebSocket proxy for session-service STOMP notifications
+      '/ws': {
+        target: 'http://localhost:8081',
+        changeOrigin: true,
+        ws: true,  // Enable WebSocket upgrade
       },
     },
   },

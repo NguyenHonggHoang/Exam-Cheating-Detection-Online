@@ -6,7 +6,7 @@ security:
 
 spring:
   datasource:
-    url: jdbc:postgresql://127.0.0.1:55432/session_db
+    url: jdbc:postgresql://localhost:5432/session_db
     username: postgres
     password: postgres
     hikari:
@@ -26,33 +26,59 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
     repair-on-migrate: true
+  # Kafka Configuration for CDC
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${SPRING_KAFKA_CONSUMER_GROUP_ID:session-service-cdc}
+      auto-offset-reset: ${SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET:earliest}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  # RabbitMQ Configuration
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://localhost:9000/oauth2/jwks}
-      client:
-        registration:
-          internal-client:  # Must match REGISTRATION_ID in OAuth2FeignRequestInterceptor
-            provider: auth-server
-            client-id: ${SERVICE_CLIENT_ID:session-service-client}
-            client-secret: ${SERVICE_CLIENT_SECRET:session-service-secret}
-            authorization-grant-type: client_credentials
-            scope: internal.read,internal.write
-        provider:
-          auth-server:
-            token-uri: ${AUTH_SERVER_TOKEN_URI:http://localhost:9000/oauth2/token}
-
-# Service URLs for inter-service communication
-services:
-  user-service:
-    url: ${USER_SERVICE_URL:http://localhost:8100}
+          jwk-set-uri: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://localhost:9090/oauth2/jwks}
 
 # CORS (cho FE local) - Allow all localhost ports for dev
 cors:
   allowed-origins: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177"
 
-# Media storage
+# MinIO Configuration (S3-compatible Object Storage)
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  # External endpoint for presigned URLs (accessible from browser via Docker port mapping)
+  external-endpoint: ${MINIO_EXTERNAL_ENDPOINT:http://localhost:9002}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin123}
+  bucket:
+    evidence: ${MINIO_BUCKET_EVIDENCE:exam-evidence}
+    identity: ${MINIO_BUCKET_IDENTITY:exam-identity}
+
+# Redis Configuration
+redis:
+  host: ${SPRING_REDIS_HOST:localhost}
+  port: ${SPRING_REDIS_PORT:6379}
+
+# LiveKit Configuration
+livekit:
+  host: ${LIVEKIT_HOST:ws://localhost:7880}
+  public-url: ${LIVEKIT_PUBLIC_URL:ws://localhost:7880}
+  api-key: ${LIVEKIT_API_KEY:devkey}
+  api-secret: ${LIVEKIT_API_SECRET:secret}
+
+# Media storage (deprecated - use MinIO instead)
 # media.upload-dir is read via @Value with default; keep here commented for reference
 # media:
 #   upload-dir: ${MEDIA_UPLOAD_DIR:/app/uploads}

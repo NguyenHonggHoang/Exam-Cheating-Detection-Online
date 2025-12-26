@@ -27,6 +27,12 @@ public class Session {
     @Column(name = "status", columnDefinition = "session_status")
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.NAMED_ENUM)
     private SessionStatus status;
+    
+    @Column(name = "calibration_data", columnDefinition = "TEXT")
+    private String calibrationData;
+    
+    @Column(name = "calibration_timestamp")
+    private Instant calibrationTimestamp;
 
     public Session() {
         this.id = UUID.randomUUID();
@@ -44,4 +50,11 @@ public class Session {
     public void setEndedAt(Instant endedAt) { this.endedAt = endedAt; }
     public SessionStatus getStatus() { return status; }
     public void setStatus(SessionStatus status) { this.status = status; }
+    
+    // Calibration getters/setters
+    public String getCalibrationData() { return calibrationData; }
+    public void setCalibrationData(String calibrationData) { this.calibrationData = calibrationData; }
+    public Instant getCalibrationTimestamp() { return calibrationTimestamp; }
+    public void setCalibrationTimestamp(Instant calibrationTimestamp) { this.calibrationTimestamp = calibrationTimestamp; }
 }
+

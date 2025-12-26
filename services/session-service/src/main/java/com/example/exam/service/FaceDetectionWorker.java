@@ -1,14 +1,12 @@
 package com.example.exam.service;
 
 import com.example.exam.config.RabbitMQConfig;
+import com.example.exam.dto.IncidentEventDto;
 import com.example.exam.dto.SnapshotMessage;
-import com.example.exam.model.Incident;
-import com.example.exam.model.IncidentStatus;
-import com.example.exam.model.IncidentType;
 import com.example.exam.model.MediaSnapshot;
-import com.example.exam.repository.IncidentRepository;
 import com.example.exam.repository.MediaSnapshotRepository;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,14 +18,17 @@ import java.util.UUID;
 
 /**
  * Worker that processes snapshot messages from RabbitMQ
- * Performs face detection (stubbed) and creates incidents
+ * Performs face detection (stubbed) and sends incident events
  * 
  * Flow:
  * 1. Receive message from queue
  * 2. Load snapshot from DB
  * 3. Perform face detection (stubbed as random)
  * 4. Update face_count in DB
- * 5. Create incident if no face or multiple faces
+ * 5. Send incident event to incident-service via RabbitMQ
+ * 
+ * NOTE: Following microservices principles, this worker does NOT
+ * create incidents directly. It sends events to incident-service.
  */
 @Service
 public class FaceDetectionWorker {
@@ -36,12 +37,12 @@ public class FaceDetectionWorker {
     private static final Random random = new Random();
     
     private final MediaSnapshotRepository snapshotRepository;
-    private final IncidentRepository incidentRepository;
+    private final RabbitTemplate rabbitTemplate;
     
     public FaceDetectionWorker(MediaSnapshotRepository snapshotRepository,
-                               IncidentRepository incidentRepository) {
+                               RabbitTemplate rabbitTemplate) {
         this.snapshotRepository = snapshotRepository;
-        this.incidentRepository = incidentRepository;
+        this.rabbitTemplate = rabbitTemplate;
     }
     
     /**
@@ -74,8 +75,8 @@ public class FaceDetectionWorker {
             log.info("Face detection complete: snapshotId={}, faceCount={}", 
                     snapshot.getId(), faceCount);
             
-            // 4. Create incident if needed
-            createIncidentIfNeeded(snapshot);
+            // 4. Send incident event if needed (to incident-service)
+            sendIncidentEventIfNeeded(snapshot);
             
         } catch (Exception ex) {
             log.error("Error processing snapshot: snapshotId={}, error={}", 
@@ -106,27 +107,25 @@ public class FaceDetectionWorker {
     }
     
     /**
-     * Create incident based on face count
+     * Send incident event to incident-service based on face count
      * - 0 faces → NO_FACE incident
-     * - 2+ faces → MULTI_FACE incident
-     * 
-     * Idempotent: Check if incident already exists
+     * - 2+ faces → MULTIPLE_FACES incident
      */
-    private void createIncidentIfNeeded(MediaSnapshot snapshot) {
+    private void sendIncidentEventIfNeeded(MediaSnapshot snapshot) {
         UUID sessionId = snapshot.getSessionId();
         Long timestamp = snapshot.getTs();
         int faceCount = snapshot.getFaceCount();
         
-        IncidentType type = null;
+        String type = null;
         String reason = null;
         BigDecimal score = null;
         
         if (faceCount == 0) {
-            type = IncidentType.NO_FACE;
+            type = "NO_FACE";
             reason = "No face detected in webcam snapshot";
             score = new BigDecimal("0.70");
         } else if (faceCount >= 2) {
-            type = IncidentType.MULTI_FACE;
+            type = "MULTIPLE_FACES";
             reason = String.format("%d faces detected (possible assistance)", faceCount);
             score = new BigDecimal("0.85");
         } else {
@@ -134,31 +133,29 @@ public class FaceDetectionWorker {
             return;
         }
         
-        // Check if incident already exists (idempotency)
-        Optional<Incident> existing = incidentRepository.findBySessionIdAndTypeAndTs(
-                sessionId, type, timestamp
-        );
+        // Create and send incident event
+        IncidentEventDto event = IncidentEventDto.builder()
+                .sessionId(sessionId)
+                .type(type)
+                .timestamp(timestamp)
+                .score(score)
+                .reason(reason)
+                .evidenceUrl(snapshot.getObjectKey())
+                .detectedBy("SERVER_AI")
+                .eventTime(Instant.now())
+                .build();
         
-        if (existing.isPresent()) {
-            log.debug("Incident already exists: sessionId={}, type={}, ts={}", 
-                    sessionId, type, timestamp);
-            return;
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.EXCHANGE_NAME,
+                    RabbitMQConfig.INCIDENT_ROUTING_KEY,
+                    event
+            );
+            log.info("Sent incident event: sessionId={}, type={}, faceCount={}", 
+                    sessionId, type, faceCount);
+        } catch (Exception ex) {
+            log.error("Failed to send incident event: sessionId={}, type={}, error={}", 
+                    sessionId, type, ex.getMessage(), ex);
         }
-        
-        // Create new incident
-        Incident incident = new Incident();
-        incident.setSessionId(sessionId);
-        incident.setType(type);
-        incident.setTs(timestamp);
-        incident.setScore(score);
-        incident.setReason(reason);
-        incident.setEvidenceUrl(snapshot.getObjectKey()); // Link to snapshot
-        incident.setStatus(IncidentStatus.OPEN);
-        incident.setCreatedAt(Instant.now());
-        
-        incidentRepository.save(incident);
-        
-        log.warn("Created incident: sessionId={}, type={}, faceCount={}, score={}", 
-                sessionId, type, faceCount, score);
     }
 }

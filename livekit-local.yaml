@@ -1,0 +1,39 @@
+# LiveKit Local Development Config
+# Use this when running livekit-server.exe locally with Redis in Docker
+#
+# Usage: livekit-server.exe --config livekit-local.yaml
+
+port: 7880
+
+rtc:
+  port_range_start: 50000
+  port_range_end: 50020
+  use_external_ip: true
+  stun_servers:
+    - stun.l.google.com:19302
+    - stun1.l.google.com:19302
+  enable_loopback_candidate: true
+
+redis:
+  # Connect to Redis in Docker (exposed on host port 6379)
+  address: localhost:6379
+
+keys:
+  devkey: secret
+
+logging:
+  level: info
+  pion_level: warn
+
+room:
+  auto_create: true
+  empty_timeout: 300
+  max_participants: 50
+
+turn:
+  enabled: false
+
+webhook:
+  urls:
+    - http://localhost:8081/api/egress/webhook
+  api_key: devkey

@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import type {
-  LoginRequest, 
+  LoginRequest,
   LoginResponse,
   StartSessionRequest,
   StartSessionResponse,
@@ -21,6 +21,7 @@ const AUTH_BASE_URL = '/api/auth';
 
 class ApiClient {
   private client: AxiosInstance;
+  private redirectPending = false;
 
   constructor() {
     this.client = axios.create({
@@ -28,7 +29,7 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
-      withCredentials: true, 
+      withCredentials: true,
     });
 
     this.setupInterceptors();
@@ -39,11 +40,20 @@ class ApiClient {
       (response) => response,
       (error: AxiosError<ApiError>) => {
         if (error.response?.status === 401) {
-          console.warn('[ApiClient] Session expired or unauthorized. Redirecting to login...');
-          
-          if (!window.location.pathname.includes('/auth/signin')) {
+          const failingUrl = error.config?.url || 'unknown';
+          console.warn(`[ApiClient] 401 Unauthorized on: ${failingUrl}`);
 
-             window.location.href = `${AUTH_BASE_URL}/signin/exam-oidc?callbackUrl=${encodeURIComponent(window.location.href)}`;
+          // Only redirect to login if not already redirecting and not on auth pages
+          if (!this.redirectPending && !window.location.pathname.includes('/auth/')) {
+            // Debounce redirects - wait 2 seconds before redirecting
+            this.redirectPending = true;
+            console.warn('[ApiClient] Session expired. Will redirect to login in 2 seconds...');
+
+            setTimeout(() => {
+              if (this.redirectPending) {
+                window.location.href = `${AUTH_BASE_URL}/signin/exam-oidc?callbackUrl=${encodeURIComponent(window.location.href)}`;
+              }
+            }, 2000);
           }
         }
         return Promise.reject(error);
@@ -81,7 +91,7 @@ class ApiClient {
 
       document.body.appendChild(form);
       form.submit();
-      
+
     } catch (error) {
       console.error("Login flow error:", error);
       window.location.href = '/api/auth/signin/exam-oidc';
@@ -94,9 +104,9 @@ class ApiClient {
       const logoutUrl = response.data.url;
 
       await axios.post('/api/auth/signout', {
-        csrfToken: await this.getCsrfToken() 
+        csrfToken: await this.getCsrfToken()
       });
-      
+
       window.location.href = logoutUrl;
 
     } catch (error) {
@@ -107,8 +117,8 @@ class ApiClient {
   }
 
   private async getCsrfToken() {
-     const res = await axios.get('/api/auth/csrf');
-     return res.data.csrfToken;
+    const res = await axios.get('/api/auth/csrf');
+    return res.data.csrfToken;
   }
 
 
@@ -180,5 +190,5 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient();
-export const axiosInstance = apiClient['client'] as AxiosInstance; 
+export const axiosInstance = apiClient['client'] as AxiosInstance;
 export default apiClient;

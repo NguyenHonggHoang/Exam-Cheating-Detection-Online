@@ -1,5 +1,6 @@
 -- 04-seed-data.sql
--- Seed data for session_db (users, exams, sessions, events, incidents)
+-- Seed data for session_db (exams, sessions, events)
+-- NOTE: User data comes from identity_db via CDC sync to user_shadow
 -- This file is loaded during Docker initialization
 
 -- Connect to session_db
@@ -8,309 +9,119 @@
 -- 0) Ensure pgcrypto available for gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1) Insert sample users (do nothing if username already exists)
-INSERT INTO users (id, username, email, password_hash, role)
+-- =============================================
+-- 1) Seed user_shadow with sample data (simulating CDC sync)
+-- In production, this data comes from identity_db via Kafka CDC
+-- Using same IDs as identity_db for consistency
+-- =============================================
+INSERT INTO user_shadow (user_id, username, email, role, enabled, deleted, synced_at)
 VALUES
-  (gen_random_uuid(), 'admin',    'admin@example.com',    '{noop}admin',    'ADMIN')
-ON CONFLICT (username) DO UPDATE SET email = EXCLUDED.email
-RETURNING id, username
-;
+  ('aaaaaaaa-aaaa-aaaa-aaaa-000000000001', 'admin', 'admin@example.com', 'ADMIN', true, false, now())
+ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email;
 
-INSERT INTO users (id, username, email, password_hash, role)
-VALUES (gen_random_uuid(), 'reviewer', 'reviewer@example.com', '{noop}reviewer', 'REVIEWER')
-ON CONFLICT (username) DO NOTHING;
+INSERT INTO user_shadow (user_id, username, email, role, enabled, deleted, synced_at)
+VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-000000000002', 'reviewer', 'reviewer@example.com', 'REVIEWER', true, false, now())
+ON CONFLICT (user_id) DO NOTHING;
 
-INSERT INTO users (id, username, email, password_hash, role)
-VALUES (gen_random_uuid(), 'proctor', 'proctor@example.com', '{noop}proctor', 'PROCTOR')
-ON CONFLICT (username) DO NOTHING;
+INSERT INTO user_shadow (user_id, username, email, role, enabled, deleted, synced_at)
+VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-000000000003', 'proctor', 'proctor@example.com', 'PROCTOR', true, false, now())
+ON CONFLICT (user_id) DO NOTHING;
 
-INSERT INTO users (id, username, email, password_hash, role)
-VALUES (gen_random_uuid(), 'student', 'student@example.com', '{noop}student', 'CANDIDATE')
-ON CONFLICT (username) DO NOTHING;
+INSERT INTO user_shadow (user_id, username, email, role, enabled, deleted, synced_at)
+VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-000000000004', 'student', 'student@example.com', 'CANDIDATE', true, false, now())
+ON CONFLICT (user_id) DO NOTHING;
 
--- 2) Create a sample exam if not exists (identified by name)
-WITH admin_u AS (
-  SELECT id AS admin_id FROM users WHERE username = 'admin' LIMIT 1
-)
+-- =============================================
+-- 2) Create a sample exam (use admin's user_id from identity_db)
+-- =============================================
 INSERT INTO exams (id, name, description, start_time, end_time, retention_days, created_by)
-SELECT gen_random_uuid(), 'Kỳ thi mẫu', 'Exam demo seed', now() - interval '30 minutes', now() + interval '2 hours', 30, admin_id
-FROM admin_u
-WHERE NOT EXISTS (SELECT 1 FROM exams WHERE name = 'Kỳ thi mẫu');
-
--- 3) Create a session for student for the latest "Kỳ thi mẫu" if none recent
-WITH s AS (
-  SELECT u.id AS user_id, e.id AS exam_id
-  FROM users u, exams e
-  WHERE u.username = 'student' AND e.name = 'Kỳ thi mẫu'
-  LIMIT 1
+VALUES (
+  '00000000-0000-0000-0000-000000000100'::uuid,
+  'Kỳ thi mẫu',
+  'Exam demo seed',
+  now() - interval '30 minutes',
+  now() + interval '2 hours',
+  30,
+  'aaaaaaaa-aaaa-aaaa-aaaa-000000000001'  -- admin user_id from identity_db
 )
+ON CONFLICT DO NOTHING;
+
+-- =============================================
+-- 3) Create a session for student
+-- Note: user_id references user_shadow.user_id (from identity_db)
+-- =============================================
 INSERT INTO sessions (id, user_id, exam_id, started_at, status, ip_address, user_agent)
-SELECT gen_random_uuid(), s.user_id, s.exam_id, now() - interval '10 minutes', 'ACTIVE', '127.0.0.1', 'Chrome/Windows'
-FROM s
-WHERE NOT EXISTS (
-  SELECT 1 FROM sessions ss
-  WHERE ss.user_id = s.user_id AND ss.exam_id = s.exam_id AND ss.started_at > now() - interval '1 day'
+VALUES (
+  '00000000-0000-0000-0000-000000000200'::uuid,
+  'aaaaaaaa-aaaa-aaaa-aaaa-000000000004',  -- student user_id from identity_db
+  '00000000-0000-0000-0000-000000000100'::uuid,
+  now() - interval '10 minutes',
+  'ACTIVE',
+  '127.0.0.1',
+  'Chrome/Windows'
 )
-RETURNING id;
+ON CONFLICT DO NOTHING;
 
--- 4) Insert telemetry events for the latest session (tab switch, paste)
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
-)
+-- =============================================
+-- 4) Insert telemetry events for the session
+-- =============================================
 INSERT INTO events (id, session_id, ts, event_type, details, idempotency_key)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'TAB_SWITCH',
-       '{"count":1}'::jsonb,
-       gen_random_uuid()::text
-FROM latest_session ls
--- avoid inserting the same event repeatedly in a short window
-WHERE NOT EXISTS (
-  SELECT 1 FROM events e
-  WHERE e.session_id = ls.session_id AND e.event_type = 'TAB_SWITCH' AND e.created_at > now() - interval '5 minutes'
-);
-
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
+VALUES (
+  gen_random_uuid(),
+  '00000000-0000-0000-0000-000000000200'::uuid,
+  (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
+  'TAB_SWITCH',
+  '{"count":1}'::jsonb,
+  'seed-tab-switch-001'
 )
+ON CONFLICT (idempotency_key) DO NOTHING;
+
 INSERT INTO events (id, session_id, ts, event_type, details, idempotency_key)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'PASTE',
-       '{"field":"answer1"}'::jsonb,
-       gen_random_uuid()::text
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM events e
-  WHERE e.session_id = ls.session_id AND e.event_type = 'PASTE' AND e.created_at > now() - interval '5 minutes'
-);
-
--- 5) Insert sample media_snapshot (webcam image metadata) for latest session
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
+VALUES (
+  gen_random_uuid(),
+  '00000000-0000-0000-0000-000000000200'::uuid,
+  (EXTRACT(EPOCH FROM NOW())*1000)::bigint + 1000,
+  'PASTE',
+  '{"field":"answer1"}'::jsonb,
+  'seed-paste-001'
 )
+ON CONFLICT (idempotency_key) DO NOTHING;
+
+-- =============================================
+-- 5) Insert sample media_snapshot (webcam image metadata)
+-- =============================================
 INSERT INTO media_snapshots (id, session_id, ts, object_key, file_size, mime_type, uploaded_at, face_count, idempotency_key)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       concat('samples/', ls.session_id::text, '/img-1.jpg')::text,
-       12345,
-       'image/jpeg',
-       now(),
-       1,
-       gen_random_uuid()::text
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM media_snapshots m WHERE m.session_id = ls.session_id AND m.object_key LIKE concat('samples/', ls.session_id::text, '/img-1.jpg')
-);
-
--- 6) Insert two incidents (OPEN) for that session if not exists (TAB_ABUSE and PASTE)
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
+VALUES (
+  gen_random_uuid(),
+  '00000000-0000-0000-0000-000000000200'::uuid,
+  (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
+  'samples/00000000-0000-0000-0000-000000000200/img-1.jpg',
+  12345,
+  'image/jpeg',
+  now(),
+  1,
+  'seed-snapshot-001'
 )
-INSERT INTO incidents (id, session_id, ts, type, score, reason, evidence_url, status)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'TAB_ABUSE',
-       0.50,
-       'Tab abuse demo',
-       concat('samples/', ls.session_id::text, '/img-1.jpg'),
-       'OPEN'
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM incidents i WHERE i.session_id = ls.session_id AND i.type = 'TAB_ABUSE' AND i.created_at > now() - interval '1 day'
-);
+ON CONFLICT (idempotency_key) DO NOTHING;
 
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
-)
-INSERT INTO incidents (id, session_id, ts, type, score, reason, evidence_url, status)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'PASTE',
-       0.40,
-       'Paste demo',
-       concat('samples/', ls.session_id::text, '/img-1.jpg'),
-       'OPEN'
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM incidents i WHERE i.session_id = ls.session_id AND i.type = 'PASTE' AND i.created_at > now() - interval '1 day'
-);
+-- Note: Incident seed data has been moved to 06-incident-seed-data.sql
 
--- 7) Optionally create a review by 'reviewer' for one incident (mark CONFIRMED) once
-WITH r AS (SELECT id FROM users WHERE username = 'reviewer' LIMIT 1),
-     incident_to_review AS (
-       SELECT id FROM incidents WHERE type = 'TAB_ABUSE' ORDER BY created_at DESC LIMIT 1
-     )
-INSERT INTO reviews (id, incident_id, reviewer_id, status, note)
-SELECT gen_random_uuid(), ir.id, r.id, 'CONFIRMED', 'Sample confirm by reviewer'
-FROM incident_to_review ir, r
-ON CONFLICT (incident_id) DO NOTHING;
+-- =============================================
+-- 6) Verification queries
+-- =============================================
+SELECT '=== User Shadow (from identity_db via CDC) ===' AS section;
+SELECT user_id, username, role, deleted FROM user_shadow ORDER BY username;
 
--- 8) Short verification selects (for convenience)
-SELECT count(*) AS users_cnt FROM users;
--- 04-seed-data.sql
--- Seed data for session_db (users, exams, sessions, events, incidents)
--- This file is loaded during Docker initialization
+SELECT '=== Exams ===' AS section;
+SELECT id, name, created_by FROM exams;
 
--- Connect to session_db
-\connect session_db
+SELECT '=== Sessions ===' AS section;
+SELECT s.id, s.user_id, u.username, s.exam_id, s.status 
+FROM sessions s 
+LEFT JOIN user_shadow u ON s.user_id = u.user_id;
 
--- 0) Ensure pgcrypto available for gen_random_uuid()
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+SELECT '=== Events ===' AS section;
+SELECT id, session_id, event_type, idempotency_key FROM events;
 
--- 1) Insert sample users (do nothing if username already exists)
-INSERT INTO users (id, username, email, password_hash, role)
-VALUES
-  (gen_random_uuid(), 'admin',    'admin@example.com',    '{noop}admin',    'ADMIN')
-ON CONFLICT (username) DO UPDATE SET email = EXCLUDED.email
-RETURNING id, username
-;
-
-INSERT INTO users (id, username, email, password_hash, role)
-VALUES (gen_random_uuid(), 'reviewer', 'reviewer@example.com', '{noop}reviewer', 'REVIEWER')
-ON CONFLICT (username) DO NOTHING;
-
-INSERT INTO users (id, username, email, password_hash, role)
-VALUES (gen_random_uuid(), 'proctor', 'proctor@example.com', '{noop}proctor', 'PROCTOR')
-ON CONFLICT (username) DO NOTHING;
-
-INSERT INTO users (id, username, email, password_hash, role)
-VALUES (gen_random_uuid(), 'student', 'student@example.com', '{noop}student', 'CANDIDATE')
-ON CONFLICT (username) DO NOTHING;
-
--- 2) Create a sample exam if not exists (identified by name)
-WITH admin_u AS (
-  SELECT id AS admin_id FROM users WHERE username = 'admin' LIMIT 1
-)
-INSERT INTO exams (id, name, description, start_time, end_time, retention_days, created_by)
-SELECT gen_random_uuid(), 'Kỳ thi mẫu', 'Exam demo seed', now() - interval '30 minutes', now() + interval '2 hours', 30, admin_id
-FROM admin_u
-WHERE NOT EXISTS (SELECT 1 FROM exams WHERE name = 'Kỳ thi mẫu');
-
--- 3) Create a session for student for the latest "Kỳ thi mẫu" if none recent
-WITH s AS (
-  SELECT u.id AS user_id, e.id AS exam_id
-  FROM users u, exams e
-  WHERE u.username = 'student' AND e.name = 'Kỳ thi mẫu'
-  LIMIT 1
-)
-INSERT INTO sessions (id, user_id, exam_id, started_at, status, ip_address, user_agent)
-SELECT gen_random_uuid(), s.user_id, s.exam_id, now() - interval '10 minutes', 'ACTIVE', '127.0.0.1', 'Chrome/Windows'
-FROM s
-WHERE NOT EXISTS (
-  SELECT 1 FROM sessions ss
-  WHERE ss.user_id = s.user_id AND ss.exam_id = s.exam_id AND ss.started_at > now() - interval '1 day'
-)
-RETURNING id;
-
--- 4) Insert telemetry events for the latest session (tab switch, paste)
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
-)
-INSERT INTO events (id, session_id, ts, event_type, details, idempotency_key)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'TAB_SWITCH',
-       '{"count":1}'::jsonb,
-       gen_random_uuid()::text
-FROM latest_session ls
--- avoid inserting the same event repeatedly in a short window
-WHERE NOT EXISTS (
-  SELECT 1 FROM events e
-  WHERE e.session_id = ls.session_id AND e.event_type = 'TAB_SWITCH' AND e.created_at > now() - interval '5 minutes'
-);
-
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
-)
-INSERT INTO events (id, session_id, ts, event_type, details, idempotency_key)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'PASTE',
-       '{"field":"answer1"}'::jsonb,
-       gen_random_uuid()::text
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM events e
-  WHERE e.session_id = ls.session_id AND e.event_type = 'PASTE' AND e.created_at > now() - interval '5 minutes'
-);
-
--- 5) Insert sample media_snapshot (webcam image metadata) for latest session
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
-)
-INSERT INTO media_snapshots (id, session_id, ts, object_key, file_size, mime_type, uploaded_at, face_count, idempotency_key)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       concat('samples/', ls.session_id::text, '/img-1.jpg')::text,
-       12345,
-       'image/jpeg',
-       now(),
-       1,
-       gen_random_uuid()::text
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM media_snapshots m WHERE m.session_id = ls.session_id AND m.object_key LIKE concat('samples/', ls.session_id::text, '/img-1.jpg')
-);
-
--- 6) Insert two incidents (OPEN) for that session if not exists (TAB_ABUSE and PASTE)
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
-)
-INSERT INTO incidents (id, session_id, ts, type, score, reason, evidence_url, status)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'TAB_ABUSE',
-       0.50,
-       'Tab abuse demo',
-       concat('samples/', ls.session_id::text, '/img-1.jpg'),
-       'OPEN'
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM incidents i WHERE i.session_id = ls.session_id AND i.type = 'TAB_ABUSE' AND i.created_at > now() - interval '1 day'
-);
-
-WITH latest_session AS (
-  SELECT id AS session_id FROM sessions ORDER BY started_at DESC LIMIT 1
-)
-INSERT INTO incidents (id, session_id, ts, type, score, reason, evidence_url, status)
-SELECT gen_random_uuid(),
-       ls.session_id,
-       (EXTRACT(EPOCH FROM NOW())*1000)::bigint,
-       'PASTE',
-       0.40,
-       'Paste demo',
-       concat('samples/', ls.session_id::text, '/img-1.jpg'),
-       'OPEN'
-FROM latest_session ls
-WHERE NOT EXISTS (
-  SELECT 1 FROM incidents i WHERE i.session_id = ls.session_id AND i.type = 'PASTE' AND i.created_at > now() - interval '1 day'
-);
-
--- 7) Optionally create a review by 'reviewer' for one incident (mark CONFIRMED) once
-WITH r AS (SELECT id FROM users WHERE username = 'reviewer' LIMIT 1),
-     incident_to_review AS (
-       SELECT id FROM incidents WHERE type = 'TAB_ABUSE' ORDER BY created_at DESC LIMIT 1
-     )
-INSERT INTO reviews (id, incident_id, reviewer_id, status, note)
-SELECT gen_random_uuid(), ir.id, r.id, 'CONFIRMED', 'Sample confirm by reviewer'
-FROM incident_to_review ir, r
-ON CONFLICT (incident_id) DO NOTHING;
-
--- 8) Short verification selects (for convenience)
-SELECT count(*) AS users_cnt FROM users;
-SELECT id, username, role FROM users ORDER BY created_at;
-SELECT id, name, created_at FROM exams ORDER BY created_at DESC LIMIT 5;
-SELECT id, user_id, exam_id, started_at, status FROM sessions ORDER BY started_at DESC LIMIT 5;
-SELECT id, session_id, event_type, to_timestamp(ts/1000.0) AS when_utc, details FROM events ORDER BY created_at DESC LIMIT 10;
-SELECT id, session_id, type, status, reason, evidence_url FROM incidents ORDER BY created_at DESC LIMIT 10;
-SELECT * FROM incidents_with_exam ORDER BY ts DESC LIMIT 10;
+SELECT '=== Media Snapshots ===' AS section;
+SELECT id, session_id, object_key, face_count FROM media_snapshots;

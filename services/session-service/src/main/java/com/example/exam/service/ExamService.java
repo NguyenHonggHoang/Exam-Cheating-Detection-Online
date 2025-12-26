@@ -2,6 +2,7 @@ package com.example.exam.service;
 
 import com.example.exam.dto.ExamDto;
 import com.example.exam.model.Exam;
+import com.example.exam.model.Exam.BrowserMode;
 import com.example.exam.repository.ExamRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,13 +59,52 @@ public class ExamService {
         exam.setDescription(request.description);
         exam.setStartTime(request.startTime);
         exam.setEndTime(request.endTime);
+        exam.setDurationMinutes(request.durationMinutes);
         exam.setRetentionDays(request.retentionDays != null ? request.retentionDays : 30);
+        
+        // SEB Configuration
+        BrowserMode browserMode = parseBrowserMode(request.browserMode);
+        exam.setBrowserMode(browserMode);
+        
+        // Auto-generate SEB config key if SEB mode is enabled
+        if (browserMode != BrowserMode.NORMAL) {
+            exam.setSebConfigKey(ExamDto.generateSebConfigKey());
+        }
+
+        if (request.sebConfig != null) {
+            Exam.SebConfig config = new Exam.SebConfig();
+            // Basic settings
+            config.setQuitPassword(request.sebConfig.quitPassword);
+            config.setAdminPassword(request.sebConfig.adminPassword);
+            config.setAllowWifi(request.sebConfig.allowWifi);
+            config.setShowTaskBar(request.sebConfig.showTaskBar);
+            config.setShowReloadButton(request.sebConfig.showReloadButton);
+            config.setShowTime(request.sebConfig.showTime);
+            config.setShowInputLanguage(request.sebConfig.showInputLanguage);
+            config.setAllowQuit(request.sebConfig.allowQuit);
+            // Security settings
+            config.setDetectVirtualMachine(request.sebConfig.detectVirtualMachine);
+            config.setAllowRemoteDesktop(request.sebConfig.allowRemoteDesktop);
+            config.setAllowMultipleDisplays(request.sebConfig.allowMultipleDisplays);
+            config.setAllowDisplayMirroring(request.sebConfig.allowDisplayMirroring);
+            config.setBlockScreenCapture(request.sebConfig.blockScreenCapture);
+            config.setEnableKioskMode(request.sebConfig.enableKioskMode);
+            config.setEnablePrivateClipboard(request.sebConfig.enablePrivateClipboard);
+            config.setUrlFilterRules(request.sebConfig.urlFilterRules);
+            config.setProhibitedProcesses(request.sebConfig.prohibitedProcesses);
+            exam.setSebConfig(config);
+        }
+        
+        exam.setRequireIdVerification(request.requireIdVerification != null ? request.requireIdVerification : true);
+        exam.setMaxVerificationAttempts(request.maxVerificationAttempts != null ? request.maxVerificationAttempts : 5);
+        exam.setMaxAttempts(request.maxAttempts);  // null = unlimited
+        
         exam.setCreatedBy(com.example.exam.util.SecurityUtils.getCurrentUserId());
         exam.setCreatedAt(Instant.now());
         exam.setUpdatedAt(Instant.now());
         
         Exam saved = examRepository.save(exam);
-        log.info("Created exam with ID: {}", saved.getId());
+        log.info("Created exam with ID: {}, browserMode: {}, maxAttempts: {}", saved.getId(), browserMode, request.maxAttempts);
         
         return toResponse(saved);
     }
@@ -83,7 +123,54 @@ public class ExamService {
         if (request.description != null) exam.setDescription(request.description);
         if (request.startTime != null) exam.setStartTime(request.startTime);
         if (request.endTime != null) exam.setEndTime(request.endTime);
+        if (request.durationMinutes != null) exam.setDurationMinutes(request.durationMinutes);
         if (request.retentionDays != null) exam.setRetentionDays(request.retentionDays);
+        
+        // Update SEB Configuration
+        if (request.browserMode != null) {
+            BrowserMode newMode = parseBrowserMode(request.browserMode);
+            exam.setBrowserMode(newMode);
+            
+            // Generate SEB key if switching to SEB mode and no key exists
+            if (newMode != BrowserMode.NORMAL && exam.getSebConfigKey() == null) {
+                exam.setSebConfigKey(ExamDto.generateSebConfigKey());
+            }
+            if (newMode != BrowserMode.NORMAL && exam.getSebConfigKey() == null) {
+                exam.setSebConfigKey(ExamDto.generateSebConfigKey());
+            }
+        }
+        
+        if (request.sebConfig != null) {
+            Exam.SebConfig config = exam.getSebConfig();
+            if (config == null) config = new Exam.SebConfig();
+            
+            // Basic settings
+            if (request.sebConfig.quitPassword != null) config.setQuitPassword(request.sebConfig.quitPassword);
+            if (request.sebConfig.adminPassword != null) config.setAdminPassword(request.sebConfig.adminPassword);
+            if (request.sebConfig.allowWifi != null) config.setAllowWifi(request.sebConfig.allowWifi);
+            if (request.sebConfig.showTaskBar != null) config.setShowTaskBar(request.sebConfig.showTaskBar);
+            if (request.sebConfig.showReloadButton != null) config.setShowReloadButton(request.sebConfig.showReloadButton);
+            if (request.sebConfig.showTime != null) config.setShowTime(request.sebConfig.showTime);
+            if (request.sebConfig.showInputLanguage != null) config.setShowInputLanguage(request.sebConfig.showInputLanguage);
+            if (request.sebConfig.allowQuit != null) config.setAllowQuit(request.sebConfig.allowQuit);
+            // Security settings
+            if (request.sebConfig.detectVirtualMachine != null) config.setDetectVirtualMachine(request.sebConfig.detectVirtualMachine);
+            if (request.sebConfig.allowRemoteDesktop != null) config.setAllowRemoteDesktop(request.sebConfig.allowRemoteDesktop);
+            if (request.sebConfig.allowMultipleDisplays != null) config.setAllowMultipleDisplays(request.sebConfig.allowMultipleDisplays);
+            if (request.sebConfig.allowDisplayMirroring != null) config.setAllowDisplayMirroring(request.sebConfig.allowDisplayMirroring);
+            if (request.sebConfig.blockScreenCapture != null) config.setBlockScreenCapture(request.sebConfig.blockScreenCapture);
+            if (request.sebConfig.enableKioskMode != null) config.setEnableKioskMode(request.sebConfig.enableKioskMode);
+            if (request.sebConfig.enablePrivateClipboard != null) config.setEnablePrivateClipboard(request.sebConfig.enablePrivateClipboard);
+            if (request.sebConfig.urlFilterRules != null) config.setUrlFilterRules(request.sebConfig.urlFilterRules);
+            if (request.sebConfig.prohibitedProcesses != null) config.setProhibitedProcesses(request.sebConfig.prohibitedProcesses);
+            
+            exam.setSebConfig(config);
+        }
+        if (request.requireIdVerification != null) exam.setRequireIdVerification(request.requireIdVerification);
+        if (request.maxVerificationAttempts != null) exam.setMaxVerificationAttempts(request.maxVerificationAttempts);
+        // maxAttempts can be explicitly set to null (unlimited) or a number
+        exam.setMaxAttempts(request.maxAttempts);
+        
         exam.setUpdatedAt(Instant.now());
         
         Exam saved = examRepository.save(exam);
@@ -104,21 +191,70 @@ public class ExamService {
         examRepository.deleteById(id);
         log.info("Deleted exam: {}", id);
     }
+    
+    /**
+     * Parse browser mode from string
+     */
+    private BrowserMode parseBrowserMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return BrowserMode.NORMAL;
+        }
+        try {
+            return BrowserMode.valueOf(mode.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("Invalid browser mode: {}, defaulting to NORMAL", mode);
+            return BrowserMode.NORMAL;
+        }
+    }
 
     /**
      * Convert Exam entity to Response DTO
      */
     private ExamDto.Response toResponse(Exam exam) {
-        return new ExamDto.Response(
+        ExamDto.SebConfigDto sebConfigDto = null;
+        if (exam.getSebConfig() != null) {
+            Exam.SebConfig c = exam.getSebConfig();
+            sebConfigDto = new ExamDto.SebConfigDto(
+                c.getQuitPassword(),
+                c.getAdminPassword(),
+                c.getAllowWifi(),
+                c.getShowTaskBar(),
+                c.getShowReloadButton(),
+                c.getShowTime(),
+                c.getShowInputLanguage(),
+                c.getAllowQuit()
+            );
+            // Add security fields
+            sebConfigDto.detectVirtualMachine = c.getDetectVirtualMachine();
+            sebConfigDto.allowRemoteDesktop = c.getAllowRemoteDesktop();
+            sebConfigDto.allowMultipleDisplays = c.getAllowMultipleDisplays();
+            sebConfigDto.allowDisplayMirroring = c.getAllowDisplayMirroring();
+            sebConfigDto.blockScreenCapture = c.getBlockScreenCapture();
+            sebConfigDto.enableKioskMode = c.getEnableKioskMode();
+            sebConfigDto.enablePrivateClipboard = c.getEnablePrivateClipboard();
+            sebConfigDto.urlFilterRules = c.getUrlFilterRules();
+            sebConfigDto.prohibitedProcesses = c.getProhibitedProcesses();
+        }
+
+        ExamDto.Response response = new ExamDto.Response(
                 exam.getId(),
                 exam.getName(),
                 exam.getDescription(),
                 exam.getStartTime(),
                 exam.getEndTime(),
+                exam.getDurationMinutes(),
                 exam.getRetentionDays(),
                 exam.getCreatedBy(),
                 exam.getCreatedAt(),
-                exam.getUpdatedAt()
+                exam.getUpdatedAt(),
+                exam.getBrowserMode(),
+                sebConfigDto,
+                exam.getSebConfigKey(),
+                exam.getRequireIdVerification(),
+                exam.getMaxVerificationAttempts()
         );
+        response.maxAttempts = exam.getMaxAttempts();
+        return response;
     }
 }
+

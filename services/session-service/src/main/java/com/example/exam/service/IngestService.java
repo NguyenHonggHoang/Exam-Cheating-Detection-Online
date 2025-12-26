@@ -23,6 +23,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * @deprecated As of 2025-12-26, event ingestion is handled via MinIO + worker processing.
+ * This service is tied to deprecated IngestController.
+ * This will be removed in a future version.
+ */
+@Deprecated
 @Service
 public class IngestService {
     private final SessionRepository sessionRepository;

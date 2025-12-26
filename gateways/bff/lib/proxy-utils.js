@@ -11,8 +11,13 @@ export function getBodyInit(req) {
 export async function proxyRequest(req, res, targetUrl, accessToken = null) {
     const headers = new Headers();
 
-    if(req.headers['content-type']){
+    if (req.headers['content-type']) {
         headers.set('Content-Type', req.headers['content-type']);
+    }
+
+    // Forward Accept header for SSE detection
+    if (req.headers['accept']) {
+        headers.set('Accept', req.headers['accept']);
     }
 
     if (accessToken) {
@@ -31,6 +36,10 @@ export async function proxyRequest(req, res, targetUrl, accessToken = null) {
             duplex: 'half',
         });
 
+        // Check if this is an SSE response
+        const contentType = response.headers.get('content-type') || '';
+        const isSSE = contentType.includes('text/event-stream');
+
         res.status(response.status);
 
         response.headers.forEach((value, key) => {
@@ -39,12 +48,29 @@ export async function proxyRequest(req, res, targetUrl, accessToken = null) {
             }
         });
 
-        if(response.body) {
+        // SSE-specific headers to prevent buffering
+        if (isSSE) {
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no'); // Disable Nginx buffering
+            console.log('[Proxy] SSE connection detected, streaming enabled');
+        }
+
+        if (response.body) {
             const reader = response.body.getReader();
+
+            // For SSE, we need to flush after each chunk
+            const flushIfNeeded = () => {
+                if (isSSE && typeof res.flush === 'function') {
+                    res.flush();
+                }
+            };
+
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 res.write(Buffer.from(value));
+                flushIfNeeded();
             }
             res.end();
         }

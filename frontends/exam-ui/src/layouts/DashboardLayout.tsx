@@ -15,7 +15,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     if (!user) {
       navigate('/login');
     }
-  // only run when user or navigate changes
+    // only run when user or navigate changes
   }, [user, navigate]);
 
   if (!user) return null;
@@ -33,18 +33,19 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
       case 'PROCTOR':
       case 'REVIEWER':
         return [
-          { path: '/dashboard', icon: '🏠', label: 'Trang chủ' },
+          { path: '/proctor', icon: '🏠', label: 'Bảng điều khiển' },
           { path: '/proctor/active-exams', icon: '📝', label: 'Kỳ thi đang mở' },
           { path: '/proctor/violations', icon: '🚨', label: 'Danh sách vi phạm' },
-          { path: '/proctor/live-monitoring', icon: '📹', label: 'Giám sát trực tiếp' },
+          { path: '/proctor/video-analysis', icon: '🎥', label: 'Phân tích Video' },
+          { path: '/proctor/behavior-analysis', icon: '📊', label: 'Phân tích Hành vi' },
         ];
       case 'ADMIN':
         return [
           { path: '/dashboard', icon: '🏠', label: 'Trang chủ' },
-          { path: '/admin/manage-exams', icon: '📚', label: 'Quản lý kỳ thi' },
-          { path: '/admin/exam-statistics', icon: '📈', label: 'Thống kê' },
-          { path: '/admin/all-violations', icon: '⚠️', label: 'Tất cả vi phạm' },
-          { path: '/admin/system-settings', icon: '⚙️', label: 'Cài đặt hệ thống' },
+          { path: '/admin/exams', icon: '📚', label: 'Quản lý kỳ thi' },
+          { path: '/admin/users', icon: '👥', label: 'Quản lý người dùng' },
+          { path: '/admin/incidents', icon: '⚠️', label: 'Tất cả vi phạm' },
+          { path: '/admin/system', icon: '⚙️', label: 'Cài đặt hệ thống' },
         ];
       default:
         return [];
@@ -163,19 +164,33 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             <span style={{ fontSize: 14, color: '#4a5568' }}>
               Chào, <strong>{user.username}</strong>
             </span>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: '50%',
-              background: '#667eea',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'white',
-              fontWeight: 700,
-              fontSize: 16
-            }}>
-              {(user.username || user.email || user.id || '?').charAt(0)}
+            <div
+              onClick={() => navigate('/profile/complete')}
+              title="Cập nhật hồ sơ"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                background: '#667eea',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                fontWeight: 700,
+                fontSize: 16,
+                cursor: 'pointer',
+                transition: 'transform 0.2s, box-shadow 0.2s'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.transform = 'scale(1.05)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.4)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              {(user.username || user.email || user.id || '?').charAt(0).toUpperCase()}
             </div>
           </div>
         </div>

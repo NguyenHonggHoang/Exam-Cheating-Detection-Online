@@ -4,6 +4,8 @@ export interface User {
   id: string;
   username: string;
   email: string;
+  name?: string;
+  studentId?: string;
   role: 'ADMIN' | 'PROCTOR' | 'REVIEWER' | 'CANDIDATE';
 }
 
@@ -137,4 +139,59 @@ export interface ApiError {
   message: string;
   status: number;
   errors?: Record<string, string[]>;
+}
+
+// Identity Verification Types
+export interface StudentIdPhotoStatus {
+  hasPhoto: boolean;
+  photoId?: string;
+  photoUrl?: string;
+  status: 'NOT_UPLOADED' | 'PENDING' | 'VERIFIED' | 'REJECTED';
+  uploadedAt?: string;
+  verifiedAt?: string;
+  rejectionReason?: string;
+  message?: string;
+}
+
+export interface PresignedUploadResponse {
+  uploadUrl: string;
+  objectKey: string;
+  publicUrl: string;
+  expiresIn: number;
+}
+
+export interface IdentityVerificationRequest {
+  sessionId: string;
+  snapshotObjectKey: string;
+}
+
+export interface IdentityVerificationResponse {
+  success: boolean;
+  requestId?: string;
+  status?: string;
+  message?: string;
+  error?: string;
+}
+
+export interface IdentityVerificationResult {
+  hasResult: boolean;
+  verified?: boolean;
+  confidence?: number;
+  similarity?: number;
+  message?: string;
+  verifiedAt?: string;
+  referenceFaceDetected?: boolean;
+  probeFaceDetected?: boolean;
+  status?: string;
+}
+
+export interface IdentityVerificationHistory {
+  id: string;
+  sessionId: string;
+  userId: string;
+  verified: boolean;
+  confidence: number;
+  similarity: number;
+  message: string;
+  verifiedAt: string;
 }

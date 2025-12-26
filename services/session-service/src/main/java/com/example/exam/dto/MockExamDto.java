@@ -30,7 +30,8 @@ public class MockExamDto {
             String type, // "MULTIPLE_CHOICE" or "TEXT"
             String text,
             List<String> options, // null for TEXT type
-            String correctAnswer // for demo purposes (shouldn't be sent to frontend in real app)
+            String correctAnswer, // for demo purposes (shouldn't be sent to frontend in real app)
+            String difficulty // EASY, MEDIUM, HARD
     ) {}
 
     public record GetQuestionsResponse(
@@ -40,12 +41,36 @@ public class MockExamDto {
             int durationMinutes
     ) {}
 
+    public record GetQuestionResponse(
+            UUID examId,
+            String examName,
+            Question question,
+            int questionIndex, // 0-based
+            int totalQuestions,
+            int durationMinutes
+    ) {}
+
     public record SubmitAnswer(
             @NotBlank(message = "questionId is required")
             String questionId,
             
             @NotBlank(message = "answer is required")
-            String answer
+            String answer,
+            
+            // Answer behavior metrics (optional)
+            Long timeSpentMs,
+            Integer revisionCount,
+            List<AnswerChangeDto> answerChanges,
+            Double averageTypingSpeed,
+            Boolean hadPreSuspicionDuring,
+            String difficulty
+    ) {}
+    
+    public record AnswerChangeDto(
+            String fromAnswer,
+            String toAnswer,
+            Long timestamp,
+            String reason
     ) {}
 
     public record SubmitRequest(

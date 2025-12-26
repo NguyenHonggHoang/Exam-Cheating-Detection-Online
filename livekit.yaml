@@ -1,0 +1,39 @@
+port: 7880
+
+rtc:
+  port_range_start: 50000
+  port_range_end: 50020
+  # For local development, use_external_ip should be false
+  use_external_ip: false
+  stun_servers:
+    - stun.l.google.com:19302
+    - stun1.l.google.com:19302
+  # Critical for localhost testing - allows candidates on same machine
+  enable_loopback_candidate: true
+
+# LOCAL DEV: Use localhost:6379 (Redis exposed from Docker)
+# DOCKER: Use redis:6379 (Docker network DNS)
+redis:
+  address: localhost:6379
+
+keys:
+  devkey: secret
+
+logging:
+  level: info
+  pion_level: warn
+
+room:
+  auto_create: true
+  empty_timeout: 300
+  max_participants: 50
+
+# TURN server disabled for local development
+# For production, configure with proper domain
+turn:
+  enabled: false
+
+webhook:
+  urls:
+    - http://localhost:8081/api/egress/webhook
+  api_key: devkey

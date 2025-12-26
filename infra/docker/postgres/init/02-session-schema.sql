@@ -1,52 +1,75 @@
 -- 02-session-schema.sql
+-- Schema for session_db - Exam session management
+-- NOTE: User data is synced from identity_db via CDC (user_shadow table)
 \connect session_db
 
--- (Content from schema.sql)
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- ... (Copying schema.sql content, but ensuring it runs on session_db)
--- [Truncated for brevity, but I will include the full content in the actual file write]
--- Note: I will paste the content of schema.sql here.
-
--- 2) Create enums
-CREATE TYPE user_role AS ENUM ('ADMIN', 'PROCTOR', 'REVIEWER', 'CANDIDATE');
+-- =============================================
+-- ENUMS
+-- =============================================
 CREATE TYPE session_status AS ENUM ('ACTIVE', 'ENDED', 'ABORTED');
 CREATE TYPE event_type AS ENUM ('TAB_SWITCH', 'PASTE', 'FOCUS', 'BLUR');
-CREATE TYPE incident_type AS ENUM ('NO_FACE', 'MULTI_FACE', 'TAB_ABUSE', 'PASTE');
-CREATE TYPE incident_status AS ENUM ('OPEN', 'CONFIRMED', 'REJECTED');
-CREATE TYPE review_status AS ENUM ('CONFIRMED', 'REJECTED');
 
--- 3) Tables
+-- =============================================
+-- SHADOW TABLE (synced from identity_db via CDC)
+-- =============================================
 
--- users
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  username VARCHAR(100) UNIQUE NOT NULL,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  role user_role NOT NULL DEFAULT 'CANDIDATE',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+-- User shadow table - synced from identity_db.users via Kafka CDC
+-- This is the ONLY user data in session_db (no local users table)
+CREATE TABLE IF NOT EXISTS user_shadow (
+  user_id VARCHAR(255) PRIMARY KEY,  -- OAuth2 subject ID from identity_db
+  username VARCHAR(100) NOT NULL,
+  email VARCHAR(255),
+  role VARCHAR(50),
+  enabled BOOLEAN DEFAULT true,
+  deleted BOOLEAN NOT NULL DEFAULT false,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- exams
+-- =============================================
+-- CORE TABLES
+-- =============================================
+
+-- Exams table
 CREATE TABLE IF NOT EXISTS exams (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name VARCHAR(255) NOT NULL,
   description TEXT,
   start_time TIMESTAMPTZ,
   end_time TIMESTAMPTZ,
+  duration_minutes INT,
   retention_days INT NOT NULL DEFAULT 30,
-  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  
+  -- Browser mode for exam security
+  browser_mode VARCHAR(20) DEFAULT 'NORMAL',
+  
+  -- SEB (Safe Exam Browser) Configuration
+  seb_quit_password VARCHAR(100),
+  seb_admin_password VARCHAR(100),
+  seb_allow_wifi BOOLEAN DEFAULT true,
+  seb_show_taskbar BOOLEAN DEFAULT true,
+  seb_show_reload_button BOOLEAN DEFAULT true,
+  seb_show_time BOOLEAN DEFAULT true,
+  seb_show_input_language BOOLEAN DEFAULT true,
+  seb_allow_quit BOOLEAN DEFAULT true,
+  seb_config_key VARCHAR(255),
+  
+  -- Verification settings
+  require_id_verification BOOLEAN DEFAULT true,
+  max_verification_attempts INT DEFAULT 5,
+  max_attempts INT,
+  
+  created_by VARCHAR(255),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (end_time IS NULL OR start_time IS NULL OR end_time > start_time)
 );
 
--- sessions (allow multiple sessions per user/exam)
+-- Sessions table (exam sessions)
 CREATE TABLE IF NOT EXISTS sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id VARCHAR(255) NOT NULL,
   exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
   started_at TIMESTAMPTZ NOT NULL,
   ended_at TIMESTAMPTZ,
@@ -57,76 +80,53 @@ CREATE TABLE IF NOT EXISTS sessions (
   CHECK (ended_at IS NULL OR ended_at > started_at)
 );
 
--- media_snapshots (webcam images)
+-- Media snapshots table (webcam images stored in MinIO)
 CREATE TABLE IF NOT EXISTS media_snapshots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  ts BIGINT NOT NULL, -- epoch milliseconds
+  ts BIGINT NOT NULL,
   object_key TEXT NOT NULL UNIQUE,
   file_size BIGINT,
   mime_type VARCHAR(100),
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  face_count INT, -- NULL until processed
+  face_count INT,
   idempotency_key VARCHAR(255) UNIQUE,
   CHECK (face_count IS NULL OR face_count >= 0)
 );
 
--- events (browser telemetry)
+-- Events table (browser telemetry)
 CREATE TABLE IF NOT EXISTS events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  ts BIGINT NOT NULL, -- epoch milliseconds
+  ts BIGINT NOT NULL,
   event_type event_type NOT NULL,
   details JSONB,
   idempotency_key VARCHAR(255) UNIQUE NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- incidents (alerts)
-CREATE TABLE IF NOT EXISTS incidents (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  ts BIGINT NOT NULL, -- epoch milliseconds when incident created
-  type incident_type NOT NULL,
-  score NUMERIC(5,2),
-  reason TEXT,
-  evidence_url TEXT,
-  status incident_status NOT NULL DEFAULT 'OPEN',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- =============================================
+-- INDEXES
+-- =============================================
 
--- reviews (proctor decisions) - one final review per incident (unique)
-CREATE TABLE IF NOT EXISTS reviews (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
-  reviewer_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  status review_status NOT NULL,
-  note TEXT,
-  reviewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (incident_id)
-);
+-- User shadow indexes
+CREATE INDEX IF NOT EXISTS idx_user_shadow_username ON user_shadow(username);
+CREATE INDEX IF NOT EXISTS idx_user_shadow_email ON user_shadow(email);
+CREATE INDEX IF NOT EXISTS idx_user_shadow_role ON user_shadow(role);
+CREATE INDEX IF NOT EXISTS idx_user_shadow_active ON user_shadow(deleted) WHERE deleted = false;
 
--- 4) Indexes
-CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+-- Core table indexes
 CREATE INDEX IF NOT EXISTS idx_exams_created_by ON exams(created_by);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_exam ON sessions(exam_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_media_snapshots_session_ts ON media_snapshots(session_id, ts);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_media_snapshots_session_ts ON media_snapshots(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_events_session_ts ON events(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_events_session_ts_type ON events(session_id, ts, event_type);
-CREATE INDEX IF NOT EXISTS idx_incidents_session_ts ON incidents(session_id, ts);
-CREATE INDEX IF NOT EXISTS idx_incidents_type_status ON incidents(type, status);
-CREATE INDEX IF NOT EXISTS idx_reviews_reviewer ON reviews(reviewer_id);
 
--- 5) View
-CREATE OR REPLACE VIEW incidents_with_exam AS
-SELECT i.*, s.exam_id
-FROM incidents i
-JOIN sessions s ON s.id = i.session_id;
-
--- 6) Functions & Triggers
+-- =============================================
+-- TRIGGERS
+-- =============================================
 CREATE OR REPLACE FUNCTION trg_set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -135,39 +135,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS set_updated_at_users ON users;
-CREATE TRIGGER set_updated_at_users BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
-
 DROP TRIGGER IF EXISTS set_updated_at_exams ON exams;
 CREATE TRIGGER set_updated_at_exams BEFORE UPDATE ON exams FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 
-CREATE OR REPLACE FUNCTION trg_sync_incident_status_from_review()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
-    UPDATE incidents
-    SET status = CASE NEW.status
-      WHEN 'CONFIRMED' THEN 'CONFIRMED'::incident_status
-      WHEN 'REJECTED' THEN 'REJECTED'::incident_status
-    END
-    WHERE id = NEW.incident_id;
-    RETURN NEW;
-  ELSIF TG_OP = 'DELETE' THEN
-    RETURN OLD;
-  END IF;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_sync_incident_status ON reviews;
-CREATE TRIGGER trg_sync_incident_status AFTER INSERT OR UPDATE ON reviews FOR EACH ROW EXECUTE FUNCTION trg_sync_incident_status_from_review();
-
-CREATE OR REPLACE FUNCTION trg_reopen_incident_on_review_delete()
-RETURNS TRIGGER AS $$
-BEGIN
-  UPDATE incidents SET status = 'OPEN' WHERE id = OLD.incident_id;
-  RETURN OLD;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_reopen_incident ON reviews;
-CREATE TRIGGER trg_reopen_incident AFTER DELETE ON reviews FOR EACH ROW EXECUTE FUNCTION trg_reopen_incident_on_review_delete();
+-- =============================================
+-- COMMENTS
+-- =============================================
+COMMENT ON TABLE user_shadow IS 'Shadow copy of identity_db.users synced via Kafka CDC - READ ONLY';

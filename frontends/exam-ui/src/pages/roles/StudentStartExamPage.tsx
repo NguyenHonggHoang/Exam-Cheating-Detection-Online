@@ -7,22 +7,28 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/ui/
 import { Button } from '@/ui/button';
 import { Alert, AlertDescription } from '@/ui/alert';
 import { Badge } from '@/ui/badge';
-import { 
-  AlertCircle, 
-  Clock, 
-  Calendar, 
-  BookOpen, 
+import {
+  AlertCircle,
+  Clock,
+  Calendar,
+  BookOpen,
   CheckCircle,
   AlertTriangle,
   Video,
-  Monitor
+  Monitor,
+  Shield,
+  Download,
+  ExternalLink
 } from 'lucide-react';
+import { useSEBContext } from '@/lib/hooks/useSEBContext';
+import { axiosInstance } from '@/api/client';
 
 export const StudentStartExamPage = () => {
   const { examId } = useParams<{ examId: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
-  
+  const { isInSEB } = useSEBContext();
+
   const [exam, setExam] = useState<Exam | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
@@ -46,6 +52,10 @@ export const StudentStartExamPage = () => {
     try {
       setLoading(true);
       const examData = await examsApi.getById(examId);
+      console.log('Loaded Exam Data:', examData);
+      console.log('Browser Mode:', examData.browserMode);
+      console.log('Is SEB Required?', examData.browserMode === 'SEB_REQUIRED');
+      console.log('Is In SEB?', isInSEB);
       setExam(examData);
     } catch (err) {
       console.error('Error loading exam:', err);
@@ -66,17 +76,18 @@ export const StudentStartExamPage = () => {
     if (!exam || !user) return;
 
     try {
+      // STRICT SEB ENFORCEMENT
+      // Double check before starting session
+      if (exam.browserMode === 'SEB_REQUIRED' && !isInSEB) {
+        setError('Bắt buộc sử dụng Safe Exam Browser. Hệ thống đã chặn thao tác này.');
+        return;
+      }
+
       setStarting(true);
       setError(null);
 
-      // Start a new session (use 'start' instead of 'create')
-      const session = await sessionsApi.start({
-        examId: exam.id,
-        userId: user.id
-      });
-
-      // Navigate to exam page (mock exam for now)
-      navigate(`/exam/${exam.id}/session/${session.id}`);
+      // Proceed to Face Verification
+      navigate(`/exam/${exam.id}/verify`);
     } catch (err) {
       console.error('Error starting exam:', err);
       setError('Không thể bắt đầu kỳ thi. Vui lòng thử lại sau.');
@@ -96,7 +107,28 @@ export const StudentStartExamPage = () => {
     });
   };
 
+  const handleDownloadSebConfig = async () => {
+    if (!examId) return;
+    try {
+      const response = await axiosInstance.get(`/api/exams/${examId}/seb-config`, {
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `exam-${examId.substring(0, 8)}.seb`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error('Failed to download SEB config:', err);
+      setError('Không thể tải file cấu hình SEB');
+    }
+  };
+
   const allChecksComplete = Object.values(checksCompleted).every(check => check);
+  const isSebRequired = exam?.browserMode === 'SEB_REQUIRED';
+  const showSebBlocking = isSebRequired && !isInSEB;
 
   if (loading) {
     return (
@@ -217,6 +249,30 @@ export const StudentStartExamPage = () => {
         </CardContent>
       </Card>
 
+      {/* SEB Enforcement */}
+      {showSebBlocking && (
+        <Alert variant="destructive" className="mb-6 bg-red-50 border-red-200">
+          <Shield className="h-4 w-4 text-red-600" />
+          <AlertDescription className="text-red-800">
+            <div className="font-semibold mb-2">Yêu cầu Safe Exam Browser (SEB)</div>
+            <p className="mb-4">
+              Kỳ thi này yêu cầu sử dụng trình duyệt bảo mật Safe Exam Browser.
+              Bạn đang không sử dụng SEB hoặc phiên bản không hỗ trợ.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Button onClick={handleDownloadSebConfig} variant="outline" className="bg-white border-red-200 text-red-700 hover:bg-red-50">
+                <Download className="w-4 h-4 mr-2" />
+                1. Tải cấu hình thi (.seb)
+              </Button>
+              <Button onClick={() => window.location.href = `seb://${window.location.host}/api/proxy/api/exams/${examId}/seb-config`} className="bg-red-600 hover:bg-red-700 text-white">
+                <ExternalLink className="w-4 h-4 mr-2" />
+                2. Mở trong SEB
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Rules and Warnings */}
       <Alert className="mb-6 border-yellow-200 bg-yellow-50">
         <AlertTriangle className="h-4 w-4 text-yellow-600" />
@@ -233,6 +289,18 @@ export const StudentStartExamPage = () => {
 
       {/* Action Buttons */}
       <div className="flex gap-4">
+        {/* SEB Config Download Button (Always visible if SEB Required) */}
+        {exam.browserMode === 'SEB_REQUIRED' && (
+          <Button
+            variant="outline"
+            onClick={handleDownloadSebConfig}
+            className="border-blue-200 text-blue-700 hover:bg-blue-50"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Tải cấu hình SEB
+          </Button>
+        )}
+
         <Button
           variant="outline"
           onClick={() => navigate('/exams')}
@@ -242,7 +310,7 @@ export const StudentStartExamPage = () => {
         </Button>
         <Button
           onClick={handleStartExam}
-          disabled={!allChecksComplete || starting || exam.status !== 'ACTIVE'}
+          disabled={!allChecksComplete || starting || exam.status !== 'ACTIVE' || showSebBlocking}
           className="flex-1"
         >
           {starting ? (

@@ -1,88 +1,422 @@
-# =============================
-# General OS files
-# =============================
-.DS_Store
-Thumbs.db
+# ==========================================
+# COMPREHENSIVE .GITIGNORE
+# Project: Exam Cheating Detection
+# Stack: Python, Java/Spring, Next.js, React
+# ==========================================
 
-# =============================
-# IDE / Editor files
-# =============================
+# ==========================================
+# Operating System Files
+# ==========================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ==========================================
+# IDE / Editor Files
+# ==========================================
+# JetBrains (IntelliJ, PyCharm, WebStorm, etc.)
 .idea/
 *.iml
+*.ipr
+*.iws
+.idea_modules/
+cmake-build-*/
+
+# Visual Studio Code
 .vscode/
+*.code-workspace
+.history/
+
+# Cursor IDE
+.cursor/
+.cursorignore
+.cursorindex
+
+# Antigravity (Gemini Code Assist)
+.gemini/
+
+# Kiro IDE
+.kiro/
+
+# Eclipse
+.project
+.classpath
+.settings/
+*.launch
+.metadata/
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.loadpath
+.recommenders
+
+# NetBeans
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# Sublime Text
 *.sublime-workspace
 *.sublime-project
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+*.sublime_session
+sftp-config.json
 
-# =============================
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Vim
+*.swp
+*.swo
+*.swn
+*.bak
+*~
+tags
+Session.vim
+.netrwhist
+
+# ==========================================
+# Python
+# ==========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Packages
+*.egg
+*.egg-info/
+dist/
+eggs/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+pythonenv*/
+Pipfile.lock
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# ==========================================
 # Java / Spring Boot / Gradle / Maven
-# =============================
+# ==========================================
 # Gradle
 .gradle/
-build/
+**/build/
+!src/**/build/
+gradle-app.setting
+!gradle-wrapper.jar
+!gradle-wrapper.properties
+.gradletasknamecache
+
 # Maven
 target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
 # Spring Boot
 *.log
+spring-shell.log
+*.pid
+*.seed
+*.pid.lock
+
+# Java
 *.class
 *.jar
 *.war
 *.ear
-# Optional: ignore generated sources
-generated-sources/
+*.nar
+hs_err_pid*
+replay_pid*
+.jqwik-database
 
-# =============================
-# Node / React / Next.js
-# =============================
-# Node modules
+# IntelliJ IDEA specific
+out/
+*.class
+.idea/
+*.iml
+
+# ==========================================
+# Node.js / React / Next.js
+# ==========================================
+# Dependencies
 node_modules/
-# npm logs
+jspm_packages/
+bower_components/
+
+# Build outputs
+build/
+dist/
+.next/
+out/
+.nuxt/
+.cache/
+public/sw.js
+public/workbox-*.js
+.output/
+.exports/
+
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-# Environment files
-.env
-.env.*
-# Build output
-build/
-# Next.js specific
-.next/
-out/
-# React specific (if using create-react-app)
-public/static/
-# Optional: coverage reports
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
 coverage/
+*.lcov
+.nyc_output
 
-# =============================
+# TypeScript
+*.tsbuildinfo
+.tsbuildinfo
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+.env*.local
+
+# Parcel cache
+.parcel-cache
+
+# Next.js
+.next
+out/
+next-env.d.ts
+
+# Vercel
+.vercel
+
+# Storybook
+storybook-static
+
+# PWA
+**/public/sw.js
+**/public/sw.js.map
+**/public/workbox-*.js
+**/public/workbox-*.js.map
+
+# ==========================================
 # Docker
-# =============================
-Dockerfile
-docker-compose.yml
-.dockerignore
+# ==========================================
+docker-compose*.override.yml
+.docker/
 
-# =============================
-# Miscellaneous
-# =============================
-# Logs
+# ==========================================
+# Database
+# ==========================================
+*.db
+*.sqlite
+*.sqlite3
+
+# ==========================================
+# Testing
+# ==========================================
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# ==========================================
+# Logs and Temporary Files
+# ==========================================
 *.log
-# Temporary files
+logs/
 *.tmp
+*.temp
+*.bak
 *.swp
-# IDE specific
-*.project
-*.classpath
-*.settings/
+.cache/
 
+# ==========================================
+# Secrets and Credentials
+# ==========================================
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+secrets/
+credentials/
 
+# ==========================================
+# Project Specific
+# ==========================================
+# AI Worker outputs
+ai-worker/outputs/
+ai-worker/models/*.h5
+ai-worker/models/*.pkl
+ai-worker/models/*.pt
+ai-worker/models/*.onnx
+
+# LiveKit binaries
+livekit-server.exe
+livekit.zip
+
+# Local test files
+test-*.js
+test-*.ts
+
+# Uploaded files (should be in MinIO, not git)
+uploads/
+temp-uploads/
+
+# ==========================================
+# Agent / Workflow Files
+# ==========================================
 .agent/*
 .github/*
 
-docs/
+# ==========================================
+# Documentation (optional - uncomment if needed)
+# ==========================================
+# docs/
 
-# Ignore build output
-bin/
-build/
-target/
-out/
-
-# Ignore Gradle wrapper jar
+# ==========================================
+# Ignore Gradle wrapper jar (keep properties)
+# ==========================================
 **/gradle/wrapper/gradle-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.properties

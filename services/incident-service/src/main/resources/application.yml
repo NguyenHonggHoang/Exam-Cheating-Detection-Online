@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: incident-service
+  
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/incident_db}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+  
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: "0"
+    locations: classpath:db/migration
+    out-of-order: true
+  
+  # OAuth2 Resource Server
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OAUTH_ISSUER_URI:http://localhost:9000}
+          jwk-set-uri: ${OAUTH_JWK_SET_URI:http://auth-server:9000/oauth2/jwks}
+  
+  # Kafka Configuration (for Debezium CDC)
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: incident-service-cdc
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+  
+  # RabbitMQ Configuration (for AI Workers)
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:exam}
+    password: ${SPRING_RABBITMQ_PASSWORD:exam123}
+
+# MinIO Configuration
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://minio:9000}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin123}
+  bucket:
+    evidence: ${MINIO_BUCKET_EVIDENCE:exam-evidence}
+
+server:
+  port: 8082
+
+logging:
+  level:
+    com.example.exam: DEBUG
+    org.springframework.kafka: INFO
+    org.springframework.amqp: INFO

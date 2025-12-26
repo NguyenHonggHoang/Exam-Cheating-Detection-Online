@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- ========================================
+       EXAM PROCTORING SAFE EXAM BROWSER CONFIG
+       ======================================== -->
+  
+  <!-- BASIC SETTINGS -->
+  <key>startURL</key>
+  <string>http://localhost:5173</string>
+  
+  <key>hashedQuitPassword</key>
+  <string></string>
+  
+  <key>allowQuit</key>
+  <true/>
+  
+  <!-- BROWSER SETTINGS -->
+  <key>browserViewMode</key>
+  <integer>0</integer>  <!-- Fullscreen -->
+  
+  <key>browserUserAgent</key>
+  <string>SEB</string>
+  
+  <key>browserUserAgentWinDesktopModeCustom</key>
+  <string>Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 SEB/3.7</string>
+  
+  <!-- NETWORK WHITELIST -->
+  <key>URLFilterEnable</key>
+  <true/>
+  
+  <key>URLFilterEnableContentFilter</key>
+  <false/>
+  
+  <key>URLFilterRules</key>
+  <array>
+    <!-- Allow localhost -->
+    <dict>
+      <key>action</key>
+      <integer>1</integer>
+      <key>active</key>
+      <true/>
+      <key>expression</key>
+      <string>http://localhost:*</string>
+      <key>regex</key>
+      <false/>
+    </dict>
+    
+    <!-- Allow Supabase -->
+    <dict>
+      <key>action</key>
+      <integer>1</integer>
+      <key>active</key>
+      <true/>
+      <key>expression</key>
+      <string>https://*.supabase.co/*</string>
+      <key>regex</key>
+      <false/>
+    </dict>
+    
+    <!-- Block all others -->
+    <dict>
+      <key>action</key>
+      <integer>0</integer>
+      <key>active</key>
+      <true/>
+      <key>expression</key>
+      <string>*</string>
+      <key>regex</key>
+      <false/>
+    </dict>
+  </array>
+  
+  <!-- HARDWARE ACCELERATION (CRITICAL) -->
+  <key>enableWebGL</key>
+  <true/>
+  
+  <key>enableHardwareAcceleration</key>
+  <true/>
+  
+  <!-- PERMISSIONS -->
+  <key>audioCapture</key>
+  <true/>
+  
+  <key>videoCapture</key>
+  <true/>
+  
+  <key>allowedDisplaysMaxNumber</key>
+  <integer>1</integer>
+  
+  <!-- SECURITY RESTRICTIONS -->
+  <key>allowUserSwitching</key>
+  <false/>
+  
+  <key>enableAppSwitcherCheck</key>
+  <true/>
+  
+  <key>enablePrintScreen</key>
+  <false/>
+  
+  <key>enableAltTab</key>
+  <false/>
+  
+  <key>enableCtrlAltDel</key>
+  <false/>
+  
+  <!-- DEVELOPER TOOLS -->
+  <key>allowDeveloperConsole</key>
+  <false/>
+  
+  <!-- LOGGING -->
+  <key>enableLogging</key>
+  <true/>
+  
+</dict>
+</plist>

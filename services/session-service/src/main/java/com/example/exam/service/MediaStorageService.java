@@ -16,6 +16,13 @@ import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * @deprecated As of 2025-12-26, media storage is handled by MinIO via StorageService.
+ * This local file storage approach is redundant.
+ * Functionality should be migrated to StorageService.
+ * This will be removed in a future version.
+ */
+@Deprecated
 @Service
 public class MediaStorageService {
 

@@ -14,6 +14,12 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.UUID;
 
+/**
+ * @deprecated As of 2025-12-26, this controller is no longer used.
+ * Event ingestion has been replaced by direct MinIO uploads via PresignedUrlService
+ * and worker-based processing. This will be removed in a future version.
+ */
+@Deprecated
 @RestController
 @RequestMapping("/api/ingest")
 public class IngestController {

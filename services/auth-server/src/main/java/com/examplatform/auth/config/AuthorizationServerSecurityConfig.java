@@ -95,17 +95,21 @@ public class AuthorizationServerSecurityConfig {
     @Bean
     public OAuth2TokenCustomizer<JwtEncodingContext> authoritiesClaimCustomizer() {
         return context -> {
-            if (org.springframework.security.oauth2.server.authorization.OAuth2TokenType.ACCESS_TOKEN.equals(context.getTokenType())) {
-                Authentication principal = context.getPrincipal();
-                
-                Set<String> authorities = principal.getAuthorities().stream()
-                        .map(GrantedAuthority::getAuthority)
-                        .collect(Collectors.toSet());
+            // Log token type being processed
+            logger.info("Token customizer called for token type: {}", context.getTokenType().getValue());
+            
+            // Add authorities to ALL token types (ACCESS_TOKEN, ID_TOKEN)
+            Authentication principal = context.getPrincipal();
+            
+            Set<String> authorities = principal.getAuthorities().stream()
+                    .map(GrantedAuthority::getAuthority)
+                    .collect(Collectors.toSet());
 
-                if (!authorities.isEmpty()) {
-                    context.getClaims().claim("authorities", authorities);
-                    logger.debug("Added authorities to token: {}", authorities);
-                }
+            logger.info("Principal authorities: {}", authorities);
+            
+            if (!authorities.isEmpty()) {
+                context.getClaims().claim("authorities", authorities);
+                logger.info("Added authorities to {} token: {}", context.getTokenType().getValue(), authorities);
             }
         };
     }

@@ -23,8 +23,8 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${AS_ISSUER_URI:http://localhost:9000}
-          jwk-set-uri: ${AS_JWK_SET_URI:http://localhost:9000/oauth2/jwks}
+          issuer-uri: ${AS_ISSUER_URI:http://localhost:9090}
+          jwk-set-uri: ${AS_JWK_SET_URI:http://localhost:9090/oauth2/jwks}
 
 management:
   endpoints:

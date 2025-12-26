@@ -1,11 +1,10 @@
 package com.example.exam.service;
 
-import com.example.exam.model.Incident;
-import com.example.exam.model.IncidentStatus;
-import com.example.exam.model.IncidentType;
-import com.example.exam.repository.IncidentRepository;
+import com.example.exam.config.RabbitMQConfig;
+import com.example.exam.dto.IncidentEventDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -16,14 +15,22 @@ import java.util.UUID;
 
 /**
  * Service for evaluating cheating detection rules
+ * 
+ * Sends incident events to incident-service via RabbitMQ
+ * following microservices principles.
+ * 
+ * @deprecated As of 2025-12-26, rule engine is tied to deprecated IngestService.
+ * Rule-based detection is being refactored.
+ * This will be removed in a future version.
  */
+@Deprecated
 @Service
 public class RuleService {
 
     private static final Logger log = LoggerFactory.getLogger(RuleService.class);
     
     private final StringRedisTemplate redisTemplate;
-    private final IncidentRepository incidentRepository;
+    private final RabbitTemplate rabbitTemplate;
 
     // Rule thresholds
     private static final int TAB_SWITCH_THRESHOLD = 10;
@@ -31,13 +38,13 @@ public class RuleService {
     private static final int PASTE_THRESHOLD = 3;
     private static final int PASTE_WINDOW_MINUTES = 2;
 
-    public RuleService(StringRedisTemplate redisTemplate, IncidentRepository incidentRepository) {
+    public RuleService(StringRedisTemplate redisTemplate, RabbitTemplate rabbitTemplate) {
         this.redisTemplate = redisTemplate;
-        this.incidentRepository = incidentRepository;
+        this.rabbitTemplate = rabbitTemplate;
     }
 
     /**
-     * Evaluate tab switch rule: if user switches tab > 10 times in 5 minutes -> create TAB_ABUSE incident
+     * Evaluate tab switch rule: if user switches tab > 10 times in 5 minutes -> send TAB_SWITCH incident event
      * 
      * @param sessionId Session ID
      * @param ts Timestamp of the tab switch event
@@ -62,7 +69,7 @@ public class RuleService {
             
             // Check if threshold exceeded
             if (count != null && count > TAB_SWITCH_THRESHOLD) {
-                // Check if incident already created for this time window
+                // Check if incident already sent for this time window
                 String incidentCheckKey = String.format("session:%s:tababuse:incident:%d", sessionId, minuteKey);
                 Boolean alreadyCreated = redisTemplate.opsForValue().setIfAbsent(
                     incidentCheckKey, 
@@ -71,8 +78,8 @@ public class RuleService {
                 );
                 
                 if (Boolean.TRUE.equals(alreadyCreated)) {
-                    createTabAbuseIncident(sessionId, ts, count.intValue());
-                    log.info("TAB_ABUSE incident created for session {} - count: {}", sessionId, count);
+                    sendTabAbuseEvent(sessionId, ts, count.intValue());
+                    log.info("TAB_SWITCH incident event sent for session {} - count: {}", sessionId, count);
                 }
             }
         } catch (Exception e) {
@@ -81,20 +88,21 @@ public class RuleService {
     }
 
     /**
-     * Create TAB_ABUSE incident
+     * Send TAB_SWITCH incident event to incident-service
      */
-    private void createTabAbuseIncident(UUID sessionId, Instant ts, int count) {
-        Incident incident = new Incident();
-        incident.setSessionId(sessionId);
-        incident.setType(IncidentType.TAB_ABUSE);
-        incident.setTs(ts.toEpochMilli()); // Store as milliseconds
-        incident.setScore(calculateTabAbuseScore(count));
-        incident.setReason(String.format("Tab switched %d times in %d minutes (threshold: %d)", 
-                count, TAB_SWITCH_WINDOW_MINUTES, TAB_SWITCH_THRESHOLD));
-        incident.setStatus(IncidentStatus.OPEN);
-        incident.setCreatedAt(Instant.now());
+    private void sendTabAbuseEvent(UUID sessionId, Instant ts, int count) {
+        IncidentEventDto event = IncidentEventDto.builder()
+                .sessionId(sessionId)
+                .type("TAB_SWITCH")
+                .timestamp(ts.toEpochMilli())
+                .score(calculateTabAbuseScore(count))
+                .reason(String.format("Tab switched %d times in %d minutes (threshold: %d)", 
+                        count, TAB_SWITCH_WINDOW_MINUTES, TAB_SWITCH_THRESHOLD))
+                .detectedBy("RULE_ENGINE")
+                .eventTime(Instant.now())
+                .build();
         
-        incidentRepository.save(incident);
+        sendIncidentEvent(event);
     }
 
     /**
@@ -123,7 +131,7 @@ public class RuleService {
     }
 
     /**
-     * Evaluate paste rule: if user pastes > 3 times in 2 minutes -> create PASTE incident
+     * Evaluate paste rule: if user pastes > 3 times in 2 minutes -> send PASTE incident event
      * 
      * @param sessionId Session ID
      * @param ts Timestamp of the paste event
@@ -148,7 +156,7 @@ public class RuleService {
             
             // Check if threshold exceeded
             if (count != null && count > PASTE_THRESHOLD) {
-                // Check if incident already created for this time window
+                // Check if incident already sent for this time window
                 String incidentCheckKey = String.format("session:%s:paste:incident:%d", sessionId, minuteKey);
                 Boolean alreadyCreated = redisTemplate.opsForValue().setIfAbsent(
                     incidentCheckKey, 
@@ -157,8 +165,8 @@ public class RuleService {
                 );
                 
                 if (Boolean.TRUE.equals(alreadyCreated)) {
-                    createPasteIncident(sessionId, ts, count.intValue());
-                    log.info("PASTE incident created for session {} - count: {}", sessionId, count);
+                    sendPasteEvent(sessionId, ts, count.intValue());
+                    log.info("PASTE incident event sent for session {} - count: {}", sessionId, count);
                 }
             }
         } catch (Exception e) {
@@ -167,20 +175,21 @@ public class RuleService {
     }
 
     /**
-     * Create PASTE incident
+     * Send PASTE incident event to incident-service
      */
-    private void createPasteIncident(UUID sessionId, Instant ts, int count) {
-        Incident incident = new Incident();
-        incident.setSessionId(sessionId);
-        incident.setType(IncidentType.PASTE);
-        incident.setTs(ts.toEpochMilli());
-        incident.setScore(calculatePasteScore(count));
-        incident.setReason(String.format("Pasted %d times in %d minutes (threshold: %d)", 
-                count, PASTE_WINDOW_MINUTES, PASTE_THRESHOLD));
-        incident.setStatus(IncidentStatus.OPEN);
-        incident.setCreatedAt(Instant.now());
+    private void sendPasteEvent(UUID sessionId, Instant ts, int count) {
+        IncidentEventDto event = IncidentEventDto.builder()
+                .sessionId(sessionId)
+                .type("PASTE")
+                .timestamp(ts.toEpochMilli())
+                .score(calculatePasteScore(count))
+                .reason(String.format("Pasted %d times in %d minutes (threshold: %d)", 
+                        count, PASTE_WINDOW_MINUTES, PASTE_THRESHOLD))
+                .detectedBy("RULE_ENGINE")
+                .eventTime(Instant.now())
+                .build();
         
-        incidentRepository.save(incident);
+        sendIncidentEvent(event);
     }
 
     /**
@@ -191,5 +200,23 @@ public class RuleService {
         double score = Math.min(1.0, (count - PASTE_THRESHOLD) / 3.0 + 0.6);
         score = Math.round(score * 100) / 100.0; // Round to 2 decimals
         return BigDecimal.valueOf(score);
+    }
+    
+    /**
+     * Send incident event to incident-service via RabbitMQ
+     */
+    private void sendIncidentEvent(IncidentEventDto event) {
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.EXCHANGE_NAME,
+                    RabbitMQConfig.INCIDENT_ROUTING_KEY,
+                    event
+            );
+            log.debug("Sent incident event: sessionId={}, type={}", 
+                    event.sessionId(), event.type());
+        } catch (Exception ex) {
+            log.error("Failed to send incident event: sessionId={}, type={}, error={}", 
+                    event.sessionId(), event.type(), ex.getMessage(), ex);
+        }
     }
 }

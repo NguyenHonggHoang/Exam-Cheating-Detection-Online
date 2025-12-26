@@ -3,6 +3,7 @@ package com.example.exam.controller;
 import com.example.exam.dto.StartSessionRequest;
 import com.example.exam.model.Session;
 import com.example.exam.model.SessionStatus;
+import com.example.exam.repository.AnswerLogRepository;
 import com.example.exam.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,9 @@ class SessionControllerTest {
 
     @MockBean
     SessionRepository sessionRepository;
+
+    @MockBean
+    AnswerLogRepository answerLogRepository;
 
     @Test
     void startSession_happyPath() throws Exception {

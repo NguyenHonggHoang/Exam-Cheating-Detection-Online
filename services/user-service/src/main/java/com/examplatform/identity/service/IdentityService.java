@@ -71,6 +71,75 @@ public class IdentityService {
         return toResponse(user);
     }
 
+    @Transactional
+    public UserResponse updateUser(UUID id, com.examplatform.identity.web.dto.UpdateUserRequest request) {
+        UserEntity user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
+
+        if (request.enabled() != null) {
+            if (request.enabled()) {
+                user.enable();
+            } else {
+                user.disable();
+            }
+        }
+        
+        if (request.role() != null) {
+            // Remove all existing roles and set new one for simplicity in this model
+            // Or add to existing? The UI implies single role selection usually for main role
+            // Let's clear and set to ensure strict role change if that's the intent
+            user.getRoles().clear();
+            user.assignRole(findRole(request.role()));
+        }
+
+        UserEntity saved = userRepository.save(user);
+        return toResponse(saved);
+    }
+    
+    @Transactional
+    public void deleteUser(UUID id) {
+        if (!userRepository.existsById(id)) {
+            throw new IllegalArgumentException("User not found: " + id);
+        }
+        userRepository.deleteById(id);
+    }
+    
+    @Transactional
+    public void resetPassword(UUID id, String newPassword) {
+        UserEntity user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+    }
+    
+    @Transactional
+    public UserResponse assignRole(UUID id, RoleName roleName) {
+        UserEntity user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
+        
+        // Check if already has role
+        boolean hasRole = user.getRoles().stream()
+                .anyMatch(r -> r.getRoleName() == roleName);
+                
+        if (!hasRole) {
+            user.assignRole(findRole(roleName));
+            user = userRepository.save(user);
+        }
+        return toResponse(user);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.List<UserResponse> findAll(RoleName role) {
+        java.util.List<UserEntity> users;
+        if (role != null) {
+            // Use unpaged pagination to get all results for the role
+            users = userRepository.findByRolesRoleName(role, org.springframework.data.domain.Pageable.unpaged()).getContent();
+        } else {
+            users = userRepository.findAll();
+        }
+        return users.stream().map(this::toResponse).collect(Collectors.toList());
+    }
+
     private void ensureUsernameAvailable(String username) {
         if (userRepository.existsByUsernameIgnoreCase(username)) {
             throw new IllegalArgumentException("Username already taken");
@@ -98,4 +167,5 @@ public class IdentityService {
         );
     }
 }
+
 

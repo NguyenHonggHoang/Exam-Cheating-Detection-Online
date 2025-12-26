@@ -1,14 +1,20 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
   allowedRoles?: string[];
+  skipProfileCheck?: boolean;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowedRoles }) => {
-  const { user, loading } = useAuth();
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
+  children,
+  allowedRoles,
+  skipProfileCheck = false
+}) => {
+  const { user, loading, profileCompleted } = useAuth();
+  const location = useLocation();
 
   // Show loading spinner while checking authentication
   if (loading) {
@@ -24,6 +30,18 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowedRoles 
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Check profile completion for CANDIDATE role
+  // Skip if already on profile completion page or if explicitly skipped
+  if (
+    !skipProfileCheck &&
+    user.role === 'CANDIDATE' &&
+    !profileCompleted &&
+    location.pathname !== '/profile/complete'
+  ) {
+    console.log('[ProtectedRoute] Redirecting to profile completion');
+    return <Navigate to="/profile/complete" replace />;
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {

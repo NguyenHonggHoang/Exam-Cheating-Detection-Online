@@ -1,0 +1,27 @@
+# AI Worker - Requirements (Refactored)
+# Install: pip install -r requirements.txt
+
+# Core dependencies
+opencv-python>=4.8.0
+numpy>=1.24.0
+pika>=1.3.0
+requests>=2.31.0
+
+# AI/ML Models for Comprehensive Analysis
+ultralytics>=8.0.0      # YOLOv8 for object detection
+easyocr>=1.7.0          # OCR for document/text detection
+mediapipe>=0.10.0       # Hand pose estimation
+
+# Face Verification (Required for face_verification_worker)
+insightface>=0.7.3
+onnxruntime>=1.16.0
+# face_recognition>=1.3.0
+# dlib>=19.24.0
+
+# Development
+pytest>=7.4.0
+# librosa>=0.10.1
+# scipy>=1.11.0
+
+# Utilities
+python-dotenv>=1.0.0

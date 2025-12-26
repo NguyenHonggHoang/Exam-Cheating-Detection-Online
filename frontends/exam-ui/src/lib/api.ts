@@ -1,7 +1,8 @@
 import axios from 'axios';
 
+// Use BFF proxy for all API calls
 export const api = axios.create({
-  baseURL: '/api',
+  baseURL: '/api/proxy',
 });
 
 export function tinyPngBase64(): string {
