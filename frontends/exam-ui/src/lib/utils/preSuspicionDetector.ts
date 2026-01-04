@@ -96,9 +96,9 @@ const CALIBRATION_THRESHOLDS = {
  * - Higher confidence threshold requires multiple signals
  */
 const PHONE_PREP_THRESHOLDS = {
-    // Primary thresholds
-    PITCH_DOWN_DELTA: 12,     // 12° down from baseline (keep sensitive)
-    YAW_DELTA: 15,            // 15° turn (slightly raised for multi-condition)
+    // Primary thresholds - RAISED to reduce false positives
+    PITCH_DOWN_DELTA: 25,     // 25° down from baseline (lowered from 35 - >40° absolute)
+    YAW_DELTA: 25,            // 25° turn (raised from 20°)
 
     // Gaze thresholds - tightened for multi-condition approach
     GAZE_V_DELTA: 0.25,       // 25% vertical eye shift (up from 0.15)
@@ -108,13 +108,13 @@ const PHONE_PREP_THRESHOLDS = {
     DISTANCE_DELTA_THRESHOLD: -0.08,  // Face getting closer = leaning forward
     DISTANCE_BONUS_CONFIDENCE: 15,     // Extra confidence if distance changed
 
-    // Timing
+    // Timing - RAISED to require longer sustained behavior
     BLINK_RATIO: 0.8,         // 20% reduction = focus/reading
     FACE_DRIFT_MAX: 20,       // 20px drift tolerance
-    WINDOW_DURATION: 1800,    // 1.8s sustained (up from 0.2s for fewer false positives)
+    WINDOW_DURATION: 2500,    // 2.5s sustained (raised from 1.8s)
 
-    // Confidence scoring
-    CONFIDENCE_THRESHOLD: 40,  // 40/100 - higher threshold for multi-condition (up from 30)
+    // Confidence scoring - RAISED to require more signals
+    CONFIDENCE_THRESHOLD: 35,  // 35/100 - requires pitch+stable+one more condition
 
     // ========================================
     // ESCALATION LOGIC (NEW)
@@ -128,7 +128,7 @@ const PHONE_PREP_THRESHOLDS = {
 
     // Per-condition confidence weights
     WEIGHTS: {
-        PITCH_DOWN: 25,           // Head tilted down
+        PITCH_DOWN: 30,           // Head tilted down (increased from 25)
         GAZE_DOWN: 20,            // Eyes looking down
         YAW_SIDE: 25,             // Head turned side
         GAZE_SIDE: 20,            // Eyes looking side
@@ -381,6 +381,13 @@ export class PreSuspicionDetector {
     // Track pre-suspicion events for escalation
     private preSuspicionHistory: Array<{ timestamp: number; pattern: string }> = [];
 
+    // Track when user returned to normal state (for history reset)
+    private lastNormalStateStart: number | null = null;
+    private static readonly NORMAL_STATE_RESET_DURATION = 5000; // Reset history after 5s of normal
+
+    private baselineFaceArea: number | null = null;
+    private normalStateFrames = 0;
+
     setBaseline(baseline: BaselineData): void {
         this.baseline = baseline;
         this.history = [];
@@ -428,7 +435,35 @@ export class PreSuspicionDetector {
         };
 
         // Detect pattern
-        return this.detectPattern(signals, now);
+        const result = this.detectPattern(signals, now);
+
+        // Update baselineFaceArea if user is in "Normal" state (low confidence)
+        // This makes leaning detection robust against drift and stops "flapping"
+        // (Flapping occurred because we compared frame-t-frame, so stopping movement reset ratio to 1)
+        const currentFaceArea = faceBox.width * faceBox.height;
+
+        if (result.pattern === 'none' && result.confidence < 20) {
+            this.normalStateFrames++;
+
+            // Only update baseline after 1 second (5 frames) of stability
+            if (this.normalStateFrames > 5) {
+                if (this.baselineFaceArea === null) {
+                    this.baselineFaceArea = currentFaceArea;
+                } else {
+                    // Slow Exponential Moving Average (EMA) to adapt to small shifts
+                    // Alpha = 0.02 (very slow update)
+                    this.baselineFaceArea = this.baselineFaceArea * 0.98 + currentFaceArea * 0.02;
+                }
+            }
+        } else {
+            this.normalStateFrames = 0;
+            // Initialize if null even if bad state (better than nothing)
+            if (this.baselineFaceArea === null) {
+                this.baselineFaceArea = currentFaceArea;
+            }
+        }
+
+        return result;
     }
 
     private calculateSignals(
@@ -505,7 +540,7 @@ export class PreSuspicionDetector {
         // In this system: POSITIVE pitch = looking DOWN
         // Normal screen viewing: ~5-15° down
         // Suspicious: > 25° down (looking at phone in lap)
-        const NEUTRAL_PITCH = 10; // Assume normal viewing is ~10° down
+        const NEUTRAL_PITCH = 15; // Assume normal viewing is ~15° down (laptop screen)
         const pitchDelta = headPose.pitch - NEUTRAL_PITCH;
 
         // Yaw: any significant turn from center is suspicious
@@ -535,8 +570,12 @@ export class PreSuspicionDetector {
 
         // Face area ratio for leaning detection (> 1 = face getting bigger = leaning forward)
         const currentFaceArea = faceBox.width * faceBox.height;
-        const faceAreaRatio = this.lastFaceArea && this.lastFaceArea > 0
-            ? currentFaceArea / this.lastFaceArea
+
+        // Use rolling baseline if available (PREFERRED) to detect static leaning, otherwise frame-to-frame (fallback)
+        const referenceArea = this.baselineFaceArea || this.lastFaceArea;
+
+        const faceAreaRatio = referenceArea && referenceArea > 0
+            ? currentFaceArea / referenceArea
             : 1.0;
 
         // Update lastFaceArea for next frame
@@ -590,18 +629,19 @@ export class PreSuspicionDetector {
 
         // ========================================
         // Pattern 2: Phone beside (looking sideways)
-        // Multi-condition: yaw + gaze
+        // DISABLED - Looking sideways is handled by Look Away Detection (faceAnalysis.ts)
+        // Pre-suspicion should only detect looking DOWN (phone below pattern)
         // ========================================
-        const isLookingSide = Math.abs(signals.yawDelta) > PHONE_PREP_THRESHOLDS.YAW_DELTA;
-        const isGazingSide = Math.abs(signals.gazeDelta.horizontal) > PHONE_PREP_THRESHOLDS.GAZE_H_DELTA;
-
-        if (isLookingSide && isFaceStable) {
-            confidence += W.YAW_SIDE;
-            pattern = 'phone_beside';
-        }
-        if (isGazingSide) {
-            confidence += W.GAZE_SIDE;
-        }
+        // const isLookingSide = Math.abs(signals.yawDelta) > PHONE_PREP_THRESHOLDS.YAW_DELTA;
+        // const isGazingSide = Math.abs(signals.gazeDelta.horizontal) > PHONE_PREP_THRESHOLDS.GAZE_H_DELTA;
+        //
+        // if (isLookingSide && isFaceStable) {
+        //     confidence += W.YAW_SIDE;
+        //     pattern = 'phone_beside';
+        // }
+        // if (isGazingSide) {
+        //     confidence += W.GAZE_SIDE;
+        // }
 
         // ========================================
         // DETAILED LOGGING FOR TRACING
@@ -614,8 +654,7 @@ export class PreSuspicionDetector {
             if (isGazingDown) breakdown.push(`gaze↓:${W.GAZE_DOWN}`);
             if (isBlinkSuppressed) breakdown.push(`blink:${W.BLINK_SUPPRESSED}`);
             if (isLeaningForward && pattern === 'phone_below') breakdown.push(`lean:${W.DISTANCE_CHANGE}`);
-            if (isLookingSide && isFaceStable) breakdown.push(`yaw:${W.YAW_SIDE}`);
-            if (isGazingSide) breakdown.push(`gaze→:${W.GAZE_SIDE}`);
+            // YAW/horizontal gaze now handled by Look Away Detection
 
             console.log(
                 `[PreSuspicion:Signals] ` +
@@ -643,12 +682,26 @@ export class PreSuspicionDetector {
                 this.suspicionStartTime = now;
                 console.log(`[PreSuspicion:Start] Pattern detected: ${pattern}, confidence=${confidence}, starting sustained timer...`);
             }
+            // Reset normal state tracking when pattern detected
+            this.lastNormalStateStart = null;
         } else {
             if (this.suspicionStartTime !== null) {
                 const elapsed = now - this.suspicionStartTime;
                 console.log(`[PreSuspicion:Reset] Confidence dropped below threshold after ${(elapsed / 1000).toFixed(1)}s`);
             }
             this.suspicionStartTime = null;
+
+            // Track normal state for history reset
+            if (this.lastNormalStateStart === null) {
+                this.lastNormalStateStart = now;
+            } else {
+                const normalDuration = now - this.lastNormalStateStart;
+                // Reset escalation history after 5s of normal viewing
+                if (normalDuration >= PreSuspicionDetector.NORMAL_STATE_RESET_DURATION && this.preSuspicionHistory.length > 0) {
+                    console.log(`[PreSuspicion:HistoryReset] 🔄 User normal for ${(normalDuration / 1000).toFixed(1)}s - clearing ${this.preSuspicionHistory.length} history entries`);
+                    this.preSuspicionHistory = [];
+                }
+            }
         }
 
         // Activate after sustained duration (1.8s)

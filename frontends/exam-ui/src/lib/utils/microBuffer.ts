@@ -60,7 +60,7 @@ const QUALITY_PRESETS: Record<SuspicionType, MicroBufferQuality> = {
     default: {
         resolution: '480p',
         bitrate: 200000,   // 200 kbps - lightweight
-        fps: 5,
+        fps: 10,           // 10fps for smoother video (was 5fps - too choppy)
         description: 'Lightweight default mode'
     }
 };

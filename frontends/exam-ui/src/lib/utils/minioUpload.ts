@@ -307,7 +307,7 @@ export async function uploadEvidence(
     _severity: string, // unused but kept for API compatibility
     metadata?: EvidenceMetadata,
     onProgress?: (progress: UploadProgress) => void
-): Promise<string> {
+): Promise<{ url: string; objectKey: string }> {
     try {
         // Determine content type
         const contentType = blob.type || (evidenceType === 'snapshot' ? 'image/jpeg' : 'video/webm');
@@ -349,22 +349,14 @@ export async function uploadEvidence(
 
         console.log(`[MinIO] Evidence uploaded: ${presigned.publicUrl}`);
 
-        // Send event to Incident Service
-        await incidentsApi.sendClientEvent({
-            sessionId,
-            eventType: evidenceType === 'snapshot' ? 'EVIDENCE_SNAPSHOT' : 'EVIDENCE_CLIP',
-            violationType: violationType as IncidentType,
-            evidenceUrl: presigned.publicUrl,
-            objectKey: presigned.objectKey,
-            fileSize: blob.size,
-            timestamp: Date.now(),
-            source: 'FRONTEND_AI',
-            consecutiveCount: metadata?.consecutiveCount,
-            firstDetectedAt: metadata?.firstDetectedAt,
-            detectionResult: metadata?.detectionResult as any
-        });
+        // NOTE: Do NOT send incident here - the caller (MockExamPage, etc.) is responsible
+        // for creating the incident with the returned evidenceUrl.
+        // Previously this caused duplicate incidents.
 
-        return presigned.publicUrl;
+        return {
+            url: presigned.publicUrl,
+            objectKey: presigned.objectKey
+        };
     } catch (error) {
         console.error('[MinIO] Evidence upload error:', error);
         throw error;
@@ -445,24 +437,10 @@ export async function triggerEgressRecording(
 
         console.log(`[Egress] Recording started: egressId=${response.egressId}`);
 
-        // Send incident event for the violation (non-blocking - don't fail if this errors)
-        try {
-            await incidentsApi.sendClientEvent({
-                sessionId,
-                eventType: 'EGRESS_RECORDING_STARTED',
-                violationType: violationType as IncidentType,
-                timestamp: Date.now(),
-                source: 'FRONTEND_AI',
-                metadata: {
-                    egressId: response.egressId,
-                    roomName,
-                    durationSeconds
-                }
-            });
-        } catch (incidentError) {
-            // Non-blocking - log but don't fail the egress recording
-            console.warn('[Egress] Failed to log incident event (non-blocking):', incidentError);
-        }
+        // REMOVED: Do not send separate incident event for Egress start.
+        // The main violation incident is reported by the caller (MockExamPage/useOptimizedDetection).
+        // Sending it here creates a duplicate "phantom" incident without a snapshot.
+        console.log(`[Egress] Recording started: egressId=${response.egressId}`);
 
         return {
             success: true,

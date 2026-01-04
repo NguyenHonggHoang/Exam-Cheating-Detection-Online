@@ -65,6 +65,10 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
         onPreSuspicionTriggered
     } = options;
 
+    // Egress recording throttle: 30 seconds between triggers for same session
+    const lastEgressTriggerRef = useRef<number>(0);
+    const EGRESS_TRIGGER_COOLDOWN_MS = 30000;
+
     const preSuspicion = usePreSuspicionDetection({
         sessionId,
         stream,
@@ -74,23 +78,40 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                 onPreSuspicionTriggered(result.pattern, result.confidence);
             }
 
-            if (useEgress && roomName && result.confidence >= 30) {
+            // Use refs to get current values (avoid stale closure)
+            const currentRoomName = roomNameRef.current;
+            const currentSessionId = sessionIdRef.current;
+            const now = Date.now();
+            const timeSinceLastEgress = now - lastEgressTriggerRef.current;
+
+            console.log(`[PreSuspicion] onPreSuspicionTriggered: pattern=${result.pattern}, confidence=${result.confidence.toFixed(1)}, useEgress=${useEgress}, roomName=${currentRoomName}, timeSinceLastEgress=${(timeSinceLastEgress / 1000).toFixed(1)}s`);
+
+            // Check throttle: skip if egress was triggered recently
+            if (useEgress && currentRoomName && result.confidence >= 35 && timeSinceLastEgress >= EGRESS_TRIGGER_COOLDOWN_MS) {
                 console.log(`[PreSuspicion] Triggering early Egress recording: pattern=${result.pattern}, confidence=${result.confidence.toFixed(2)}`);
                 try {
+                    // Normalize pattern - strip ESCALATED_ prefix to avoid duplicate incident types
+                    // (PRE_SUSPICIOUS_ESCALATED_phone_below would be redundant with PRE_SUSPICIOUS_phone_below)
+                    const basePattern = result.pattern.replace('ESCALATED_', '');
                     const egressResult = await triggerEgressRecording({
-                        sessionId,
-                        roomName,
-                        violationType: `PRE_SUSPICIOUS_${result.pattern}` as any,
+                        sessionId: currentSessionId,
+                        roomName: currentRoomName,
+                        violationType: `PRE_SUSPICIOUS_${basePattern}` as any,
                         durationSeconds: 15
                     });
                     if (egressResult.success) {
                         console.log(`[PreSuspicion] ✅ Egress recording started: ${egressResult.egressId}`);
+                        lastEgressTriggerRef.current = now; // Update throttle timestamp
                     } else {
                         console.warn(`[PreSuspicion] Egress failed: ${egressResult.error}`);
                     }
                 } catch (err) {
                     console.error('[PreSuspicion] Failed to trigger Egress:', err);
                 }
+            } else if (timeSinceLastEgress < EGRESS_TRIGGER_COOLDOWN_MS) {
+                console.log(`[PreSuspicion] Skipped Egress: throttled (${((EGRESS_TRIGGER_COOLDOWN_MS - timeSinceLastEgress) / 1000).toFixed(1)}s remaining)`);
+            } else {
+                console.log(`[PreSuspicion] Skipped Egress: useEgress=${useEgress}, roomName=${currentRoomName}, confidence=${result.confidence}`);
             }
         }
     });
@@ -465,7 +486,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                 // which uses preSuspicionDetector.ts with improved multi-condition logic:
                 // - Multi-condition weighted scoring (pitch, gaze, distance, blink)
                 // - WINDOW_DURATION: 1.8s sustained
-                // - CONFIDENCE_THRESHOLD: 40
+                // - CONFIDENCE_THRESHOLD: 35 (see preSuspicionDetector.ts:117)
                 // - Escalation logic (2+ incidents → violation)
                 //
                 // The inline logic below was REMOVED to avoid duplication and conflicting thresholds.
@@ -698,7 +719,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
 
             const tracker = stateMachineRef.current.getState(violationType as SMViolationType);
 
-            const publicUrl = await uploadEvidence(
+            const { url: publicUrl, objectKey } = await uploadEvidence(
                 sessionId,
                 blob,
                 'clip',
@@ -784,24 +805,45 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
             console.log('[captureSnapshot] displayCanvasRef.current:', !!displayCanvasRef.current);
             console.log('[captureSnapshot] detectionResult:', !!detectionResult);
 
-            if (!displayCanvasRef.current) {
-                console.warn('[captureSnapshot] No display canvas available');
-                return undefined;
+            // Retry logic: wait for canvas to be available (max 3 attempts, 100ms apart)
+            let canvas = displayCanvasRef.current;
+            let attempts = 0;
+            const maxAttempts = 3;
+
+            while (!canvas && attempts < maxAttempts) {
+                attempts++;
+                console.log(`[captureSnapshot] Canvas not ready, retry ${attempts}/${maxAttempts}...`);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                canvas = displayCanvasRef.current;
+            }
+
+            if (!canvas) {
+                console.error('[captureSnapshot] No display canvas available after retries');
+                throw new Error('Display canvas not available for screenshot capture');
             }
 
             try {
-                const blob = await captureCanvasAsBlob(displayCanvasRef.current);
+                const blob = await captureCanvasAsBlob(canvas);
                 console.log('[captureSnapshot] Blob captured, size:', blob.size);
+
+                if (blob.size === 0) {
+                    throw new Error('Captured blob is empty');
+                }
 
                 const result = await uploadEvidence(
                     sessionId,
                     blob,
                     'snapshot',
-                    'PRE_SUSPICIOUS_phone_beside',
+                    'PRE_SUSPICIOUS_phone_below', // Changed from phone_beside - phone_beside is now disabled
                     'SUSPICIOUS',
                     { detectionResult: detectionResult || { timestamp: Date.now() } }
                 );
                 console.log('[captureSnapshot] Upload result:', result);
+
+                if (!result) {
+                    throw new Error('Upload returned empty result');
+                }
+
                 return result;
             } catch (err) {
                 console.error('[captureSnapshot] Failed to capture/upload:', err);

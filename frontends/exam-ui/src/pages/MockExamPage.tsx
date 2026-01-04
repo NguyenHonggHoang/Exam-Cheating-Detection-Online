@@ -817,14 +817,16 @@ export const MockExamPage = () => {
       console.warn('[Temporal] High risk detected:', riskScore, redFlags);
 
       // Capture snapshot for evidence
-      captureSnapshot().then(uploadResult => {
+      captureSnapshot().then(result => {
+        const { url: evidenceUrl, objectKey } = result;
         incidentsApi.sendClientEvent({
           sessionId,
           eventType: 'TEMPORAL_ANOMALY',
           violationType: 'BEHAVIOR_ANALYSIS' as any,
           timestamp: Date.now(),
           source: 'TEMPORAL_ANALYZER',
-          evidenceUrl: uploadResult,
+          evidenceUrl,
+          objectKey, // Add objectKey
           metadata: { score: riskScore, flags: redFlags }
         }).catch(err => console.error('Failed to report temporal anomaly:', err));
       });
@@ -842,6 +844,10 @@ export const MockExamPage = () => {
   }, [preSuspicion.temporal.riskScore, sessionId, currentViolation]);
 
   const prevPreSuspicionPatternRef = useRef<string | null>(null);
+  const lastPreSuspicionReportRef = useRef<number>(0); // Throttle incident reporting
+
+  // Pre-suspicion incident throttle: 30 seconds between reports for same pattern
+  const PRE_SUSPICION_REPORT_COOLDOWN_MS = 30000;
 
   useEffect(() => {
     console.log('[PreSuspicion useEffect] Triggered with:', {
@@ -852,9 +858,19 @@ export const MockExamPage = () => {
 
     if (preSuspicion?.isActive) {
       const pattern = preSuspicion.result?.pattern;
+      const now = Date.now();
+      const timeSinceLastReport = now - lastPreSuspicionReportRef.current;
 
-      if (pattern && pattern !== 'none' && pattern !== prevPreSuspicionPatternRef.current) {
-        console.log(`[PreSuspicion] 🚨 New pattern detected: ${pattern}`);
+      // Normalize pattern for throttle tracking - strip ESCALATED_ prefix
+      // so phone_below and ESCALATED_phone_below share the same cooldown
+      const basePattern = pattern?.replace('ESCALATED_', '');
+
+      // STRICT THROTTLE: Only process if cooldown has passed (30s)
+      // This prevents multiple incidents regardless of pattern changes
+      const cooldownPassed = timeSinceLastReport >= PRE_SUSPICION_REPORT_COOLDOWN_MS;
+
+      if (pattern && pattern !== 'none' && cooldownPassed) {
+        console.log(`[PreSuspicion] 🚨 Processing pattern: ${pattern} (base=${basePattern}, timeSinceLastReport=${(timeSinceLastReport / 1000).toFixed(1)}s)`);
 
         compositeDetector.recordEvent('PRE_SUSPICION', {
           pattern: pattern,
@@ -863,14 +879,14 @@ export const MockExamPage = () => {
 
         let violationType: string | null = null;
 
-        if (pattern === 'phone_beside') {
-          violationType = 'PRE_SUSPICIOUS_phone_beside';
-        } else if (pattern === 'phone_below') {
+        // Normalize pattern for violationType - use base pattern without ESCALATED_ prefix
+        // phone_beside is now handled by Look Away Detection, not pre-suspicion
+        if (basePattern === 'phone_below') {
           violationType = 'PRE_SUSPICIOUS_phone_below';
         }
 
         if (violationType) {
-          console.log(`[PreSuspicion] Showing warning for pattern: ${pattern} -> ${violationType}`);
+          console.log(`[PreSuspicion] Showing warning for pattern: ${pattern} (base=${basePattern}) -> ${violationType}`);
 
           setCurrentViolation({
             type: 'BLUR' as EventType,
@@ -885,18 +901,19 @@ export const MockExamPage = () => {
             time: new Date().toLocaleTimeString()
           }]);
 
-          // Capture screenshot for phone detection patterns (Requirement 3.1-3.5)
-          // Both phone_beside and phone_below should capture evidence
-          if ((pattern === 'phone_beside' || pattern === 'phone_below') && sessionId) {
+          // Capture screenshot for phone_below pattern (phone_beside is now disabled)
+          if (basePattern === 'phone_below' && sessionId) {
             console.log(`[PreSuspicion] 📸 Capturing screenshot for ${pattern} pattern`);
             captureSnapshot()
-              .then(uploadResult => {
+              .then(result => {
+                const { url: evidenceUrl, objectKey } = result;
                 console.log(`[PreSuspicion] ✅ Screenshot captured and uploaded successfully`);
                 console.log(`[PreSuspicion] 📦 Evidence Details:`, {
                   pattern,
-                  evidenceUrl: uploadResult,
-                  urlLength: uploadResult?.length,
-                  isProxyUrl: uploadResult?.includes('/api/proxy'),
+                  evidenceUrl,
+                  objectKey,
+                  urlLength: evidenceUrl?.length,
+                  isProxyUrl: evidenceUrl?.includes('/api/proxy'),
                   confidence: preSuspicion.result?.confidence
                 });
 
@@ -904,9 +921,10 @@ export const MockExamPage = () => {
                 incidentsApi.sendClientEvent({
                   sessionId,
                   eventType: violationType!,
-                  violationType: 'BEHAVIOR_ANALYSIS' as any,
+                  violationType: violationType as any,
                   violationState: 'SUSPICIOUS',
-                  evidenceUrl: uploadResult,
+                  evidenceUrl,
+                  objectKey,
                   timestamp: Date.now(),
                   source: 'PRE_SUSPICION_DETECTOR',
                   metadata: {
@@ -926,7 +944,7 @@ export const MockExamPage = () => {
                 incidentsApi.sendClientEvent({
                   sessionId,
                   eventType: violationType!,
-                  violationType: 'BEHAVIOR_ANALYSIS' as any,
+                  violationType: violationType as any,
                   violationState: 'SUSPICIOUS',
                   timestamp: Date.now(),
                   source: 'PRE_SUSPICION_DETECTOR',
@@ -954,8 +972,9 @@ export const MockExamPage = () => {
             }).catch(err => console.error('Failed to report pre-suspicion:', err));
           }
 
-          // Update pattern tracking
+          // Update pattern tracking and throttle timestamp
           prevPreSuspicionPatternRef.current = pattern;
+          lastPreSuspicionReportRef.current = now; // Enable throttle for next report
 
           // Auto-hide after 5 seconds for non-critical violations
           setTimeout(() => {
@@ -968,12 +987,16 @@ export const MockExamPage = () => {
             });
           }, 5000);
         }
+      } else if (!cooldownPassed) {
+        // Log throttle skip
+        console.log(`[PreSuspicion] ⏳ Throttled: ${((PRE_SUSPICION_REPORT_COOLDOWN_MS - timeSinceLastReport) / 1000).toFixed(1)}s remaining`);
       }
     } else {
       // Reset pattern tracking when pre-suspicion becomes inactive
+      // BUT DO NOT reset lastPreSuspicionReportRef - keep throttle active!
       prevPreSuspicionPatternRef.current = null;
     }
-  }, [preSuspicion?.isActive, preSuspicion?.result?.pattern, preSuspicion?.result?.confidence, sessionId, captureSnapshot]);
+  }, [preSuspicion?.isActive, preSuspicion?.result?.pattern, sessionId, captureSnapshot]); // Removed confidence from deps
 
   // Set up composite violation callback
   useEffect(() => {
