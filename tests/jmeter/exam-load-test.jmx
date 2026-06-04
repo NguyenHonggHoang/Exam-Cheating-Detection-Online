@@ -479,7 +479,7 @@ vars.put("STATE", UUID.randomUUID().toString())
             <name>saveConfig</name>
             <value class="SampleSaveConfiguration">
               <time>true</time>
-              <lazy>true</lazy>
+              <latency>true</latency>
               <timestamp>true</timestamp>
               <success>true</success>
               <label>true</label>
