@@ -74,36 +74,7 @@
           </elementProp>
         </ConfigTestElement>
         <hashTree/>
-        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="PKCE &amp; User Generator" enabled="true">
-          <stringProp name="cacheKey">true</stringProp>
-          <stringProp name="filename"></stringProp>
-          <stringProp name="parameters"></stringProp>
-          <stringProp name="script">import java.security.MessageDigest
-import org.apache.commons.codec.binary.Base64
-import java.util.UUID
 
-// Generate unique credentials for this thread iteration
-String uid = UUID.randomUUID().toString().replaceAll("-", "").substring(0, 8)
-String username = "jm_user_" + uid
-vars.put("USERNAME", username)
-vars.put("EMAIL", username + "@jmeter.internal")
-
-// Generate code verifier
-String codeVerifier = UUID.randomUUID().toString().replaceAll("-", "") + UUID.randomUUID().toString().replaceAll("-", "")
-vars.put("CODE_VERIFIER", codeVerifier)
-
-// Generate code challenge (S256)
-MessageDigest digest = MessageDigest.getInstance("SHA-256")
-byte[] hash = digest.digest(codeVerifier.getBytes("US-ASCII"))
-String codeChallenge = Base64.encodeBase64URLSafeString(hash).replaceAll("=", "").replaceAll("\\+", "-").replaceAll("/", "_")
-vars.put("CODE_CHALLENGE", codeChallenge)
-
-// State
-vars.put("STATE", UUID.randomUUID().toString())
-</stringProp>
-          <stringProp name="scriptLanguage">groovy</stringProp>
-        </JSR223PreProcessor>
-        <hashTree/>
         <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="Exam Flow Controller" enabled="true"/>
         <hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="1. POST /api/register" enabled="true">
@@ -133,6 +104,36 @@ vars.put("STATE", UUID.randomUUID().toString())
                 </elementProp>
               </collectionProp>
             </HeaderManager>
+            <hashTree/>
+            <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="PKCE &amp; User Generator" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">import java.security.MessageDigest
+import org.apache.commons.codec.binary.Base64
+import java.util.UUID
+
+// Generate unique credentials for this thread iteration
+String uid = UUID.randomUUID().toString().replaceAll("-", "").substring(0, 8)
+String username = "jm_user_" + uid
+vars.put("USERNAME", username)
+vars.put("EMAIL", username + "@jmeter.internal")
+
+// Generate code verifier
+String codeVerifier = UUID.randomUUID().toString().replaceAll("-", "") + UUID.randomUUID().toString().replaceAll("-", "")
+vars.put("CODE_VERIFIER", codeVerifier)
+
+// Generate code challenge (S256)
+MessageDigest digest = MessageDigest.getInstance("SHA-256")
+byte[] hash = digest.digest(codeVerifier.getBytes("US-ASCII"))
+String codeChallenge = Base64.encodeBase64URLSafeString(hash).replaceAll("=", "").replaceAll("\\+", "-").replaceAll("/", "_")
+vars.put("CODE_CHALLENGE", codeChallenge)
+
+// State
+vars.put("STATE", UUID.randomUUID().toString())
+</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PreProcessor>
             <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="2. GET /login (Extract CSRF)" enabled="true">
@@ -251,7 +252,7 @@ vars.put("STATE", UUID.randomUUID().toString())
           </HTTPSamplerProxy>
           <hashTree>
             <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor" testname="Extract Authorization Code" enabled="true">
-              <stringProp name="RegexExtractor.useHeaders">URL</stringProp>
+              <stringProp name="RegexExtractor.useHeaders">true</stringProp>
               <stringProp name="RegexExtractor.refname">AUTH_CODE</stringProp>
               <stringProp name="RegexExtractor.regex">code=([^&amp;]+)</stringProp>
               <stringProp name="RegexExtractor.template">$1$</stringProp>
@@ -345,7 +346,8 @@ vars.put("STATE", UUID.randomUUID().toString())
               <collectionProp name="Arguments.arguments">
                 <elementProp name="" elementType="HTTPArgument">
                   <stringProp name="Argument.value">{&#xd;
-  &quot;examId&quot;: &quot;exam_default_001&quot;&#xd;
+  &quot;examId&quot;: &quot;e1000000-0000-0000-0000-000000000001&quot;,&#xd;
+  &quot;userId&quot;: &quot;${USERNAME}&quot;&#xd;
 }</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
@@ -375,7 +377,7 @@ vars.put("STATE", UUID.randomUUID().toString())
             <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="8. GET /api/proxy/mock-exam/{id}/questions" enabled="true">
-            <stringProp name="HTTPSampler.path">/api/proxy/mock-exam/exam_default_001/questions</stringProp>
+            <stringProp name="HTTPSampler.path">/api/proxy/mock-exam/e1000000-0000-0000-0000-000000000001/questions</stringProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
             <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
               <collectionProp name="Arguments.arguments"/>
@@ -411,7 +413,7 @@ vars.put("STATE", UUID.randomUUID().toString())
   &quot;answers&quot;: [&#xd;
     {&#xd;
       &quot;questionId&quot;: &quot;${QUESTION_ID}&quot;,&#xd;
-      &quot;selectedOption&quot;: &quot;A&quot;&#xd;
+      &quot;answer&quot;: &quot;A&quot;&#xd;
     }&#xd;
   ]&#xd;
 }</stringProp>
