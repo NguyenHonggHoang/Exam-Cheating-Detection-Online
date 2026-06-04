@@ -422,24 +422,15 @@ export class ViolationStateMachine {
         }
 
         // Capture evidence based on state
-        if (state === 'ESCALATED' || state === 'SUSPICIOUS') {
-            // Prefer clip for serious violations
+        if (state === 'ESCALATED') {
             this.lastEvidenceCapture.set(type, now);
-            console.log(`[StateMachine] → Capture CLIP for ${type}`);
+            console.log(`[StateMachine] [ESCALATION] Escalated state reached! Capture CLIP (10s pre + 10s post) for ${type}`);
             return 'clip';
         }
 
-        if (state === 'WARN') {
-            // For HIGH severity warnings, still capture clip (not just snapshot)
-            // This ensures TAB_SWITCH, PASTE, MULTIPLE_FACES get video evidence
-            if (config.severity === 'HIGH') {
-                this.lastEvidenceCapture.set(type, now);
-                console.log(`[StateMachine] → Capture CLIP for HIGH severity ${type} at WARN`);
-                return 'clip';
-            }
-            // Snapshot for other warnings
+        if (state === 'SUSPICIOUS' || state === 'WARN') {
             this.lastEvidenceCapture.set(type, now);
-            console.log(`[StateMachine] → Capture SNAPSHOT for ${type}`);
+            console.log(`[StateMachine] State reached: ${state}. Capture SNAPSHOT for ${type}`);
             return 'snapshot';
         }
 

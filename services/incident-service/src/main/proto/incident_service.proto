@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package com.examplatform.incident.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.examplatform.incident.grpc";
+
+service IncidentGrpcService {
+  rpc SendClientEvent (ClientEventGrpcRequest) returns (ClientEventGrpcResponse);
+}
+
+message ClientEventGrpcRequest {
+  string sessionId = 1;
+  string eventType = 2;
+  string violationType = 3;
+  string violationState = 4;
+  string evidenceUrl = 5;
+  string objectKey = 6;
+  int64 fileSize = 7;
+  int64 timestamp = 8;
+  string source = 9;
+}
+
+message ClientEventGrpcResponse {
+  bool success = 1;
+  string message = 2;
+}

@@ -1,4 +1,4 @@
-// frontends/exam-ui/src/auth/AuthContext.tsx
+
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { apiClient, axiosInstance } from '../api/client';
 
@@ -46,9 +46,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState<boolean>(true);
   const [profileCompleted, setProfileCompleted] = useState<boolean>(true);
 
-  // Fetch profile completion status
   const fetchProfileStatus = async (role: UserRole): Promise<boolean> => {
-    // Only check for CANDIDATE role
     if (role !== 'CANDIDATE') return true;
 
     try {
@@ -120,28 +118,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, []);
 
-  // Heartbeat: Keep session alive by pinging session endpoint periodically
   useEffect(() => {
     if (!user) {
-      return; // No heartbeat if user is not authenticated
+      return;
     }
 
-    const HEARTBEAT_INTERVAL = 5 * 60 * 1000; // 5 minutes
+    const HEARTBEAT_INTERVAL = 5 * 60 * 1000;
     let heartbeatInterval: NodeJS.Timeout | null = null;
 
     const sendHeartbeat = async () => {
       try {
-        const response = await fetch('/api/auth/session', { 
+        const response = await fetch('/api/auth/session', {
           credentials: 'include',
           method: 'GET'
         });
 
         if (!response.ok) {
-          // Session expired or invalid
           if (response.status === 401) {
             console.log('[AuthContext] Session expired, logging out...');
             setUser(null);
-            // Optionally redirect to login
             if (window.location.pathname !== '/login') {
               window.location.href = '/login';
             }
@@ -150,8 +145,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         const session = await response.json();
-        
-        // Check if session has error (e.g., IdleTimeout, SessionExpired)
+
         if (session.error) {
           console.log('[AuthContext] Session error:', session.error);
           setUser(null);
@@ -161,15 +155,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return;
         }
 
-        // Session is still valid, update last activity
         console.log('[AuthContext] Heartbeat: Session active');
       } catch (error) {
         console.error('[AuthContext] Heartbeat error:', error);
-        // Don't logout on network errors, just log
       }
     };
 
-    // Send heartbeat immediately, then every 5 minutes
     sendHeartbeat();
     heartbeatInterval = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
 

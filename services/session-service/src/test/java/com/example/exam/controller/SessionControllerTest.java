@@ -41,6 +41,12 @@ class SessionControllerTest {
     @MockBean
     AnswerLogRepository answerLogRepository;
 
+    @MockBean
+    com.example.exam.repository.ExamRepository examRepository;
+
+    @MockBean
+    com.example.exam.service.LiveKitTokenService liveKitTokenService;
+
     @Test
     void startSession_happyPath() throws Exception {
         UUID examId = UUID.fromString("11111111-1111-1111-1111-111111111111");

@@ -310,8 +310,8 @@ export const MyViolationsPage = () => {
                       <TableCell>
                         {getSeverityBadge(violation.severity)}
                       </TableCell>
-                      <TableCell className="max-w-xs truncate" title={violation.reason}>
-                        {violation.reason}
+                      <TableCell className="max-w-xs truncate" title={violation.metadata?.reason}>
+                        {violation.metadata?.reason}
                       </TableCell>
                       <TableCell>{getStatusBadge(violation.status)}</TableCell>
                     </TableRow>

@@ -2,9 +2,9 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   requestVerification,
   waitForVerificationResult,
-  getIdPhotoStatus,
-  type IdentityVerificationResult
+  getIdPhotoStatus
 } from '../api/identity';
+import type { IdentityVerificationResult } from '../api/types';
 
 interface IdentityVerificationModalProps {
   sessionId: string;

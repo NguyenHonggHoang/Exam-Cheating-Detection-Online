@@ -1,4 +1,23 @@
 import { Readable } from 'stream';
+import { Agent, setGlobalDispatcher } from 'undici';
+
+const parsePositiveInt = (value, fallback) => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const proxyDispatcherKey = Symbol.for('exam.bff.proxyDispatcherConfigured');
+
+if (!globalThis[proxyDispatcherKey]) {
+    setGlobalDispatcher(new Agent({
+        connectTimeout: parsePositiveInt(process.env.BFF_PROXY_CONNECT_TIMEOUT_MS, 60000),
+        headersTimeout: parsePositiveInt(process.env.BFF_PROXY_HEADERS_TIMEOUT_MS, 120000),
+        bodyTimeout: parsePositiveInt(process.env.BFF_PROXY_BODY_TIMEOUT_MS, 120000),
+        connections: parsePositiveInt(process.env.BFF_PROXY_CONNECTIONS, 256),
+        pipelining: 1,
+    }));
+    globalThis[proxyDispatcherKey] = true;
+}
 
 export function getBodyInit(req) {
     if (['GET', 'HEAD'].includes(req.method)) {
@@ -22,7 +41,22 @@ export async function proxyRequest(req, res, targetUrl, accessToken = null) {
 
     if (accessToken) {
         headers.set('Authorization', `Bearer ${accessToken}`);
+    } else if (req.headers['authorization']) {
+        headers.set('Authorization', req.headers['authorization']);
     }
+
+    // Forward distributed tracing and correlation headers to downstream services
+    const traceHeaders = [
+        'traceparent', 'tracestate',
+        'x-request-id', 'x-correlation-id',
+        'x-b3-traceid', 'x-b3-spanid', 'x-b3-sampled', 'x-b3-parentspanid', 'x-b3-flags',
+        'x-ot-span-context'
+    ];
+    traceHeaders.forEach(h => {
+        if (req.headers[h]) {
+            headers.set(h, req.headers[h]);
+        }
+    });
 
     const skipHeaders = ['host', 'connection', 'content-length', 'transfer-encoding'];
 
@@ -57,22 +91,25 @@ export async function proxyRequest(req, res, targetUrl, accessToken = null) {
         }
 
         if (response.body) {
-            const reader = response.body.getReader();
+            if (isSSE) {
+                const reader = response.body.getReader();
+                // For SSE, we need to flush after each chunk
+                const flushIfNeeded = () => {
+                    if (typeof res.flush === 'function') {
+                        res.flush();
+                    }
+                };
 
-            // For SSE, we need to flush after each chunk
-            const flushIfNeeded = () => {
-                if (isSSE && typeof res.flush === 'function') {
-                    res.flush();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    res.write(Buffer.from(value));
+                    flushIfNeeded();
                 }
-            };
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                res.write(Buffer.from(value));
-                flushIfNeeded();
+                res.end();
+            } else {
+                Readable.fromWeb(response.body).pipe(res);
             }
-            res.end();
         }
         else {
             res.end();

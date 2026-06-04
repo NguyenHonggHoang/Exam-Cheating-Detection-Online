@@ -1,10 +1,3 @@
-/**
- * Heartbeat Hook
- * 
- * Keeps exam session alive by sending periodic heartbeats.
- * Also receives session status updates.
- */
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { secureExamApi, type HeartbeatResponse } from '@/api/secureExam';
 

@@ -126,7 +126,6 @@ export const mockExamApi = {
     return response.data;
   },
 
-  // NEW: Get single question by index (0-based)
   getQuestion: async (examId: string, questionIndex: number): Promise<GetQuestionResponse> => {
     const response = await axios.get(`${API_BASE_URL}/api/mock-exam/${examId}/question/${questionIndex}`);
     return response.data;
@@ -138,7 +137,7 @@ export const mockExamApi = {
   },
 
   submitBehaviorAnalysis: async (request: BehaviorAnalysisRequest): Promise<BehaviorAnalysisResponse> => {
-    const response = await axios.post(`${API_BASE_URL}/api/behavior/submit`, request);
+    const response = await axios.post(`${API_BASE_URL}/api/mock-exam/analysis`, request);
     return response.data;
   }
 };

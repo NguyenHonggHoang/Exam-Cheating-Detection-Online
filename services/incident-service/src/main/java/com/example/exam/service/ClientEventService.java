@@ -13,12 +13,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Client Event Service
- * 
- * Processes violation events from frontend AI detection
+ *
+ * Processes violation events from frontend AI detection.
+ * Writes are routed through {@link IncidentBatchWriteService} to absorb
+ * high-frequency bursts from thousands of concurrent exam sessions without
+ * overwhelming the primary datasource.
  */
 @Service
 @RequiredArgsConstructor
@@ -26,10 +31,23 @@ public class ClientEventService {
 
     private static final Logger log = LoggerFactory.getLogger(ClientEventService.class);
 
-    private final IncidentRepository incidentRepository;
+    private final IncidentBatchWriteService incidentBatchWriteService;
     private final SessionShadowRepository sessionShadowRepository;
     private final SseEmitterService sseEmitterService;
-    // TODO: Inject RabbitTemplate for AI worker jobs (optional)
+    private final IncidentRepository incidentRepository;
+
+    private final java.util.Map<UUID, java.util.Optional<SessionShadowEntity>> sessionCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Retrieve session shadow entity.
+     * Caches the result to prevent read-replica connection pool exhaustion during event floods.
+     * REMOVED @Transactional to ensure cache hits don't acquire DB connections!
+     */
+    public SessionShadowEntity getSessionShadow(UUID sessionId) {
+        return sessionCache.computeIfAbsent(sessionId, id -> 
+            sessionShadowRepository.findById(id)
+        ).orElse(null);
+    }
 
     /**
      * Process client-side detection event
@@ -40,17 +58,12 @@ public class ClientEventService {
      * 
      * @param request Client event from frontend
      */
-    @Transactional
     public void processClientEvent(ClientEventRequest request) {
         log.debug("Processing client event: sessionId={}, violation={}", 
             request.getSessionId(), request.getViolationType());
 
         try {
-            // STEP 1: Validate session exists and is ACTIVE
-            // In dev mode, allow events even if session not found in shadow table
-            // (CDC sync may be delayed)
-            SessionShadowEntity session = sessionShadowRepository.findById(request.getSessionId())
-                .orElse(null);
+            SessionShadowEntity session = getSessionShadow(request.getSessionId());
             
             if (session != null) {
                 if (session.getDeleted()) {
@@ -68,26 +81,20 @@ public class ClientEventService {
                 log.debug("Session validation passed: sessionId={}, examId={}, status={}", 
                     session.getSessionId(), session.getExamId(), session.getStatus());
             } else {
-                // Session not found in shadow table - CDC might be delayed
-                // Log warning but continue processing in dev mode
                 log.warn("Session not found in shadow table (CDC delay?): {}. Processing anyway.", 
                     request.getSessionId());
             }
             
-            // STEP 2: Create incident from client event
             Incident incident = new Incident();
             incident.setId(UUID.randomUUID());
             incident.setSessionId(request.getSessionId());
             
-            // Map violation type to incident type
             incident.setType(mapViolationTypeToIncidentType(request.getViolationType()));
             
-            // Set evidence URL and objectKey - BOTH are needed!
             incident.setEvidenceUrl(request.getEvidenceUrl());
-            incident.setObjectKey(request.getObjectKey());  // Critical for evidence display!
+            incident.setObjectKey(request.getObjectKey());  
             incident.setFileSize(request.getFileSize());
             
-            // Enhanced logging for evidence tracking
             log.info("📸 Evidence Details - URL: {}, ObjectKey: {}, FileSize: {}", 
                 request.getEvidenceUrl() != null ? request.getEvidenceUrl().substring(0, Math.min(80, request.getEvidenceUrl().length())) + "..." : "null",
                 request.getObjectKey(),
@@ -101,55 +108,106 @@ public class ClientEventService {
                 log.warn("⚠️ No evidence attached to this incident");
             }
             
-            // Set severity based on violation state
             incident.setSeverity(mapViolationStateToSeverity(request.getViolationState()));
             
-            // Set status
-            incident.setStatus("PENDING");  // Will be reviewed by proctor or AI worker
+            incident.setStatus("PENDING"); 
             
-            // Set detection source
             incident.setDetectedBy("FRONTEND_AI");
             
-            // Set timestamps
             Instant detectedAt = request.getTimestamp() != null 
                 ? Instant.ofEpochMilli(request.getTimestamp())
                 : Instant.now();
             incident.setDetectedAt(detectedAt);
             incident.setCreatedAt(Instant.now());
             
-            // Save additional metadata as JSON or separate fields (depends on schema)
-            // incident.setMetadata(buildMetadata(request));
-            
-            // Save incident
-            Incident savedIncident = incidentRepository.save(incident);
-            
-            log.info("🎯 Incident created from client event: id={}, type={}, severity={}, hasEvidence={}", 
-                incident.getId(), 
-                incident.getType(), 
+            incidentBatchWriteService.enqueue(incident);
+
+            log.info("🎯 Incident enqueued for batch write: id={}, type={}, severity={}, hasEvidence={}",
+                incident.getId(),
+                incident.getType(),
                 incident.getSeverity(),
                 incident.getEvidenceUrl() != null);
             
-            // Broadcast to connected proctors via SSE
             try {
-                IncidentDto.Response response = IncidentDto.Response.from(savedIncident);
-                // Try to get examId from session shadow
+                IncidentDto.Response response = IncidentDto.Response.from(incident);
                 if (session != null) {
                     response.setExamId(session.getExamId().toString());
                 }
                 sseEmitterService.broadcastIncident(response);
-                log.debug("Incident broadcast to SSE subscribers: {}", savedIncident.getId());
+                log.debug("Incident broadcast to SSE subscribers: {}", incident.getId());
             } catch (Exception sseError) {
                 log.warn("Failed to broadcast incident via SSE (non-fatal): {}", sseError.getMessage());
             }
             
-            // Optional: Trigger AI worker for server-side verification
-            // if (shouldTriggerWorker(incident)) {
-            //     rabbitTemplate.convertAndSend("ai.jobs", new AnalysisJob(incident.getId(), incident.getEvidenceUrl()));
-            // }
-            
         } catch (Exception e) {
             log.error("Failed to process client event: sessionId={}", request.getSessionId(), e);
             throw new RuntimeException("Failed to create incident from client event", e);
+        }
+    }
+
+    /**
+     * Process a batch of client events, perform session checks, map fields,
+     * and persist to database using batch saveAll inside a single transaction.
+     * 
+     * @param requests list of client events consumed from Kafka
+     */
+    @Transactional
+    public void processClientEventsBatch(List<ClientEventRequest> requests) {
+        log.info("Processing batch of {} client events", requests.size());
+        List<Incident> incidents = new ArrayList<>();
+        
+        for (ClientEventRequest request : requests) {
+            try {
+                SessionShadowEntity session = getSessionShadow(request.getSessionId());
+                if (session != null) {
+                    if (session.getDeleted()) {
+                        continue; // skip deleted sessions
+                    }
+                    if (!"ACTIVE".equals(session.getStatus())) {
+                        continue; // skip inactive sessions
+                    }
+                }
+                
+                Incident incident = new Incident();
+                incident.setId(UUID.randomUUID());
+                incident.setSessionId(request.getSessionId());
+                incident.setType(mapViolationTypeToIncidentType(request.getViolationType()));
+                incident.setEvidenceUrl(request.getEvidenceUrl());
+                incident.setObjectKey(request.getObjectKey());  
+                incident.setFileSize(request.getFileSize());
+                incident.setSeverity(mapViolationStateToSeverity(request.getViolationState()));
+                incident.setStatus("PENDING"); 
+                incident.setDetectedBy("FRONTEND_AI");
+                
+                Instant detectedAt = request.getTimestamp() != null 
+                    ? Instant.ofEpochMilli(request.getTimestamp())
+                    : Instant.now();
+                incident.setDetectedAt(detectedAt);
+                incident.setCreatedAt(Instant.now());
+                
+                incidents.add(incident);
+            } catch (Exception e) {
+                log.error("Failed to process single client event in batch: sessionId={}", request.getSessionId(), e);
+            }
+        }
+        
+        if (!incidents.isEmpty()) {
+            List<Incident> saved = incidentRepository.saveAll(incidents);
+            log.info("Batch saved {} incidents from Kafka to database", saved.size());
+            
+            // Broadcast via SSE asynchronously
+            for (Incident incident : saved) {
+                try {
+                    IncidentDto.Response response = IncidentDto.Response.from(incident);
+                    SessionShadowEntity session = getSessionShadow(incident.getSessionId());
+                    if (session != null) {
+                        response.setExamId(session.getExamId().toString());
+                    }
+                    sseEmitterService.broadcastIncident(response);
+                } catch (Exception sseError) {
+                    log.warn("Failed to broadcast incident via SSE: {}", sseError.getMessage());
+                }
+            }
         }
     }
 
@@ -197,14 +255,6 @@ public class ClientEventService {
         };
     }
 
-    /**
-     * Determine if AI worker should be triggered
-     * 
-     * Criteria:
-     * - HIGH severity
-     * - MULTIPLE_FACES type (needs face recognition)
-     * - Large file size (video clip vs snapshot)
-     */
     private boolean shouldTriggerWorker(Incident incident) {
         return incident.getSeverity().equals("HIGH") 
             || incident.getType().equals("MULTIPLE_FACES");

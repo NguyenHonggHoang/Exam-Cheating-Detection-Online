@@ -1,10 +1,7 @@
-import { FaceLandmark, HeadPose, EyeState, HeadPoseCalibration } from '../types/detection';
+import { FaceLandmark, HeadPose, EyeState } from '../types/detection';
 import { getLeftIrisFilter, getRightIrisFilter, resetIrisFilters } from './oneEuroFilter';
 
-/**
- * MediaPipe Face Mesh landmark indices
- * Reference: https://github.com/tensorflow/tfjs-models/tree/master/face-landmarks-detection
- */
+
 const LANDMARK_INDICES = {
     LEFT_EYE: {
         TOP: 159,
@@ -22,7 +19,6 @@ const LANDMARK_INDICES = {
         TOP_INNER: 385,
         BOTTOM_INNER: 380
     },
-    // Iris landmarks (available with refineLandmarks: true)
     LEFT_IRIS: {
         CENTER: 468,
         LEFT: 469,
@@ -49,113 +45,59 @@ const LANDMARK_INDICES = {
     }
 };
 
-/**
- * Gaze Calibration data from 4-corner calibration
- */
-export interface GazeCalibration {
-    corners: {
-        topLeft: HeadPose;
-        topRight: HeadPose;
-        bottomLeft: HeadPose;
-        bottomRight: HeadPose;
-        center: HeadPose;
-    };
-    boundaries: {
-        minPitch: number;  // Looking up limit
-        maxPitch: number;  // Looking down limit
-        minYaw: number;    // Looking right limit (negative)
-        maxYaw: number;    // Looking left limit (positive)
-    };
-    irisRange?: {
-        horizontalRange: number;  // Max left/right iris deviation
-        verticalRange: number;    // Max up/down iris deviation
-    };
-    baselineDistance?: number;  // Baseline interocular distance for face distance calibration
-    timestamp: number;
-}
 
-/**
- * Kappa angle constants
- * The visual axis (where we actually look) differs from the optical axis by ~5°
- * This asymmetry needs per-eye correction for accurate gaze estimation
- */
+
 export const KAPPA_ANGLE = {
-    // Horizontal offset: visual axis points more nasally than optical axis
-    LEFT_EYE_HORIZONTAL: 0.05,   // Left eye looks slightly to the right
-    RIGHT_EYE_HORIZONTAL: -0.05, // Right eye looks slightly to the left
-    // Vertical offset: visual axis points slightly upward
-    VERTICAL: 0.02               // Both eyes look slightly up from optical axis
+    LEFT_EYE_HORIZONTAL: 0.05,
+    RIGHT_EYE_HORIZONTAL: -0.05,
+    VERTICAL: 0.02
 };
 
-/**
- * Iris depth estimation constants
- * Based on average human iris diameter of 11.7mm
- * Used to estimate Z-depth from apparent iris size
- */
 export const IRIS_CONSTANTS = {
     AVERAGE_DIAMETER_MM: 11.7,
-    // Assumed focal length for typical webcam at 640px width
-    // f = (640/2) / tan(fov/2), assuming ~60° horizontal fov
     ASSUMED_FOCAL_LENGTH: 550
 };
 
-/**
- * Iris gaze direction with Kappa correction
- */
 export interface IrisGaze {
     leftIris: { x: number; y: number };
     rightIris: { x: number; y: number };
-    horizontalGaze: number;  // -1 (right) to 1 (left) - Kappa corrected average
-    verticalGaze: number;    // -1 (up) to 1 (down) - Kappa corrected average
-    // Per-eye corrected gaze (new)
+    horizontalGaze: number;
+    verticalGaze: number;
     leftGaze: { horizontal: number; vertical: number };
     rightGaze: { horizontal: number; vertical: number };
-    // Raw (uncorrected) values for debugging
     rawHorizontalGaze: number;
     rawVerticalGaze: number;
-    // Estimated depth/distance (optional)
-    estimatedDepthRatio?: number; // Ratio compared to baseline iris size
+    estimatedDepthRatio?: number;
 }
 
-/**
- * Face quality metrics for detection reliability
- */
+
 export interface FaceQuality {
-    brightness: number;        // 0-1, average brightness of face region
-    contrast: number;          // 0-1, contrast level
-    faceSize: number;          // Relative size of face to frame (0-1)
-    faceDistance: number;      // Estimated distance from camera
-    isGoodQuality: boolean;    // Overall quality assessment
-    warnings: string[];        // Quality warnings
+    brightness: number;
+    contrast: number;
+    faceSize: number;
+    faceDistance: number;
+    isGoodQuality: boolean;
+    warnings: string[];
 }
 
-/**
- * Analyze face quality from landmarks and canvas
- */
 export function analyzeFaceQuality(
     landmarks: FaceLandmark[],
     canvas?: HTMLCanvasElement | null
 ): FaceQuality {
     const warnings: string[] = [];
 
-    // Calculate face bounding box from landmarks
     const leftEye = landmarks[LANDMARK_INDICES.POSE.LEFT_EYE_OUTER];
     const rightEye = landmarks[LANDMARK_INDICES.POSE.RIGHT_EYE_OUTER];
     const chin = landmarks[LANDMARK_INDICES.POSE.CHIN];
     const forehead = landmarks[LANDMARK_INDICES.POSE.FOREHEAD];
 
-    // Face size relative to normalized coordinates (0-1)
     const faceWidth = Math.abs(rightEye.x - leftEye.x);
     const faceHeight = Math.abs(chin.y - forehead.y);
-    const faceSize = faceWidth * faceHeight * 4; // Scale up since face is typically 25% of frame
+    const faceSize = faceWidth * faceHeight * 4;
 
-    // Estimate distance based on inter-eye distance
-    // Typical inter-pupillary distance is ~63mm
-    // At 50cm distance, this should appear as ~15% of frame width
-    const expectedEyeDistance = 0.15; // Expected at optimal distance
+    const expectedEyeDistance = 0.15;
     const faceDistance = expectedEyeDistance / Math.max(faceWidth, 0.01);
 
-    // Quality checks
     if (faceSize < 0.05) {
         warnings.push('Face too small - move closer to camera');
     } else if (faceSize > 0.5) {
@@ -243,17 +185,6 @@ function distance(p1: FaceLandmark, p2: FaceLandmark): number {
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-/**
- * Calculate face distance metrics
- * Uses interocular distance (distance between eyes) as proxy for depth
- * Larger distance = closer to camera
- * 
- * @param landmarks Face landmarks
- * @param videoWidth Video width for normalization
- * @param videoHeight Video height for normalization
- * @param baselineDistance Optional baseline distance for calibration (from calibration phase)
- * @returns Face distance metrics
- */
 export function calculateFaceDistance(
     landmarks: FaceLandmark[],
     videoWidth: number,
@@ -264,11 +195,9 @@ export function calculateFaceDistance(
     interocularPx: number;
     faceSizePx: number;
 } {
-    // Calculate interocular distance (distance between outer eye corners)
     const leftEyeOuter = landmarks[LANDMARK_INDICES.POSE.LEFT_EYE_OUTER];
     const rightEyeOuter = landmarks[LANDMARK_INDICES.POSE.RIGHT_EYE_OUTER];
 
-    // Convert normalized coordinates to pixels
     const leftEyePx = { x: leftEyeOuter.x * videoWidth, y: leftEyeOuter.y * videoHeight };
     const rightEyePx = { x: rightEyeOuter.x * videoWidth, y: rightEyeOuter.y * videoHeight };
 
@@ -277,7 +206,6 @@ export function calculateFaceDistance(
         Math.pow(rightEyePx.y - leftEyePx.y, 2)
     );
 
-    // Calculate face bounding box size (diagonal from forehead to chin)
     const forehead = landmarks[LANDMARK_INDICES.POSE.FOREHEAD];
     const chin = landmarks[LANDMARK_INDICES.POSE.CHIN];
     const foreheadPx = { x: forehead.x * videoWidth, y: forehead.y * videoHeight };
@@ -288,8 +216,6 @@ export function calculateFaceDistance(
         Math.pow(chinPx.y - foreheadPx.y, 2)
     );
 
-    // Calculate relative distance (1.0 = baseline)
-    // If no baseline, use typical interocular distance (~60-70px at 640x480)
     const baseline = baselineDistance || 65;
     const relative = interocularPx / baseline;
 
@@ -300,10 +226,6 @@ export function calculateFaceDistance(
     };
 }
 
-/**
- * Get screen metrics for detection context
- * Different screen sizes and ratios affect detection accuracy
- */
 export function getScreenMetrics(): {
     width: number;
     height: number;
@@ -314,13 +236,11 @@ export function getScreenMetrics(): {
     const height = window.screen.height;
     const dpr = window.devicePixelRatio || 1;
 
-    // Calculate aspect ratio
     const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
     const divisor = gcd(width, height);
     const ratioW = width / divisor;
     const ratioH = height / divisor;
 
-    // Common ratios
     const ratio = `${ratioW}:${ratioH}`;
 
     return {
@@ -331,17 +251,8 @@ export function getScreenMetrics(): {
     };
 }
 
-/**
- * Calculate Eye Aspect Ratio (EAR) for blink detection
- * 
- * Formula: EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||)
- * 
- * Typical values:
- * - EAR ≈ 0.3-0.4 when eye is open
- * - EAR < 0.25 indicates closed eye (blink)
- */
+
 export function calculateEyeAspectRatio(landmarks: FaceLandmark[]): EyeState {
-    // Left eye EAR
     const leftVertical1 = distance(
         landmarks[LANDMARK_INDICES.LEFT_EYE.TOP],
         landmarks[LANDMARK_INDICES.LEFT_EYE.BOTTOM]
@@ -356,7 +267,6 @@ export function calculateEyeAspectRatio(landmarks: FaceLandmark[]): EyeState {
     );
     const leftEAR = (leftVertical1 + leftVertical2) / (2.0 * leftHorizontal);
 
-    // Right eye EAR
     const rightVertical1 = distance(
         landmarks[LANDMARK_INDICES.RIGHT_EYE.TOP],
         landmarks[LANDMARK_INDICES.RIGHT_EYE.BOTTOM]
@@ -385,18 +295,8 @@ export function calculateEyeAspectRatio(landmarks: FaceLandmark[]): EyeState {
     };
 }
 
-/**
- * Calculate iris gaze direction with Kappa correction and signal smoothing
- * 
- * Enhanced features:
- * - One Euro Filter for jitter reduction
- * - Kappa angle correction for per-eye asymmetry
- * - Depth estimation from iris diameter (optional)
- * 
- * Returns horizontal (-1 to 1) and vertical (-1 to 1) gaze direction
- */
+
 export function calculateIrisGaze(landmarks: FaceLandmark[], timestamp?: number): IrisGaze | null {
-    // Check if iris landmarks are available (indices 468-477)
     if (landmarks.length < 478) {
         return null;
     }
@@ -512,21 +412,11 @@ export function calculateIrisGaze(landmarks: FaceLandmark[], timestamp?: number)
     };
 }
 
-/**
- * Reset iris filters (call when session ends or face lost)
- */
 export { resetIrisFilters };
 
-/**
- * Calculate head pose (Pitch, Yaw, Roll) with calibration offset
- * 
- * IMPROVED FORMULA for better sensitivity
- * - Uses Z-depth from landmarks for more accurate pitch calculation
- * - Raw values are already relative to "looking straight at camera"
- */
+
 export function calculateHeadPose(
-    landmarks: FaceLandmark[],
-    calibration?: HeadPoseCalibration | null
+    landmarks: FaceLandmark[]
 ): HeadPose {
     const leftEye = landmarks[LANDMARK_INDICES.POSE.LEFT_EYE_OUTER];
     const rightEye = landmarks[LANDMARK_INDICES.POSE.RIGHT_EYE_OUTER];
@@ -562,10 +452,10 @@ export function calculateHeadPose(
     const eyeDeltaY = rightEye.y - leftEye.y;
     const rawRoll = Math.atan2(eyeDeltaY, eyeDeltaX) * (180 / Math.PI);
 
-    // Apply calibration offset if available
-    const pitch = clamp(rawPitch - (calibration?.basePitch || 0), -90, 90);
-    const yaw = clamp(rawYaw - (calibration?.baseYaw || 0), -90, 90);
-    const roll = clamp(rawRoll - (calibration?.baseRoll || 0), -45, 45);
+    // No calibration offset
+    const pitch = clamp(rawPitch, -90, 90);
+    const yaw = clamp(rawYaw, -90, 90);
+    const roll = clamp(rawRoll, -45, 45);
 
     return { pitch, yaw, roll };
 }
@@ -617,8 +507,8 @@ export const LOOK_AWAY_THRESHOLDS = {
         // OR triggered by SUSPICIOUS_GLANCE.COUNT_FOR_VIOLATION
     },
 
-    // Calibration margin multiplier
-    CALIBRATION_MARGIN: 1.3,  // 30% margin beyond calibrated range
+    // Calibration margin multiplier (unused but kept for reference)
+    CALIBRATION_MARGIN: 1.3,
 
     // Face distance adjustment
     // When user is closer/farther from camera, detection sensitivity changes
@@ -755,7 +645,6 @@ export interface EffectiveGazeResult {
     adjustments: {
         distanceMultiplier: number;      // From face distance
         screenScaleFactor: number;       // From screen metrics
-        calibrationApplied: boolean;     // Whether calibration was used
     };
 
     // Final thresholds (after all adjustments)
@@ -838,29 +727,16 @@ export function calculateEffectiveGaze(
         irisGaze?: IrisGaze | null;
         faceDistance?: number;
         screenMetrics?: ReturnType<typeof getScreenMetrics>;
-        calibration?: GazeCalibration | null;
     } = {}
 ): EffectiveGazeResult {
-    const { irisGaze, faceDistance, screenMetrics, calibration } = options;
+    const { irisGaze, faceDistance, screenMetrics } = options;
 
-    // Step 1: Get base thresholds (from calibration or defaults)
-    const margin = LOOK_AWAY_THRESHOLDS.CALIBRATION_MARGIN;
-    const calibrationApplied = !!calibration?.boundaries;
-
-    let baseThresholds = calibration?.boundaries
-        ? {
-            maxPitchUp: Math.abs(calibration.boundaries.minPitch) * margin,
-            maxPitchDown: calibration.boundaries.maxPitch * margin,
-            maxYaw: Math.max(
-                Math.abs(calibration.boundaries.minYaw),
-                calibration.boundaries.maxYaw
-            ) * margin
-        }
-        : {
-            maxPitchUp: LOOK_AWAY_THRESHOLDS.MAX_PITCH_UP,
-            maxPitchDown: LOOK_AWAY_THRESHOLDS.MAX_PITCH_DOWN,
-            maxYaw: LOOK_AWAY_THRESHOLDS.MAX_YAW
-        };
+    // Step 1: Get base thresholds (defaults)
+    const baseThresholds = {
+        maxPitchUp: LOOK_AWAY_THRESHOLDS.MAX_PITCH_UP,
+        maxPitchDown: LOOK_AWAY_THRESHOLDS.MAX_PITCH_DOWN,
+        maxYaw: LOOK_AWAY_THRESHOLDS.MAX_YAW
+    };
 
     // Step 2: Apply face distance adjustment
     let distanceMultiplier = 1.0;
@@ -941,8 +817,7 @@ export function calculateEffectiveGaze(
     // Has face distance → higher confidence
     if (faceDistance && faceDistance > 0.5 && faceDistance < 2.0) confidence += 0.15;
 
-    // Has calibration → higher confidence
-    if (calibrationApplied) confidence += 0.15;
+
 
     // Clamp to 0-1
     confidence = Math.min(1, confidence);
@@ -960,8 +835,7 @@ export function calculateEffectiveGaze(
         },
         adjustments: {
             distanceMultiplier: Number(distanceMultiplier.toFixed(2)),
-            screenScaleFactor: Number(screenScaleFactor.toFixed(2)),
-            calibrationApplied
+            screenScaleFactor: Number(screenScaleFactor.toFixed(2))
         },
         thresholds: {
             maxPitchUp: Number(finalThresholds.maxPitchUp.toFixed(1)),
@@ -994,7 +868,6 @@ export function calculateEffectiveGaze(
 export function isLookingAway(
     headPose: HeadPose,
     irisGaze?: IrisGaze | null,
-    calibration?: GazeCalibration | null,
     faceDistance?: number,
     screenMetrics?: ReturnType<typeof getScreenMetrics>
 ): boolean {
@@ -1002,8 +875,7 @@ export function isLookingAway(
     const effectiveGaze = calculateEffectiveGaze(headPose, {
         irisGaze,
         faceDistance,
-        screenMetrics,
-        calibration
+        screenMetrics
     });
 
     // Debug logging (throttled to every 2 seconds)
@@ -1055,28 +927,18 @@ isLookingAway._lastEffectiveLog = 0;
  */
 export function getLookAwayDetails(
     headPose: HeadPose,
-    irisGaze?: IrisGaze | null,
-    calibration?: GazeCalibration | null
+    irisGaze?: IrisGaze | null
 ): {
     isLooking: boolean;
     direction: 'up' | 'down' | 'left' | 'right' | 'center';
     confidence: number;
     details: string;
 } {
-    const thresholds = calibration?.boundaries
-        ? {
-            maxPitchUp: Math.abs(calibration.boundaries.minPitch) * 1.2,
-            maxPitchDown: calibration.boundaries.maxPitch * 1.2,
-            maxYaw: Math.max(
-                Math.abs(calibration.boundaries.minYaw),
-                calibration.boundaries.maxYaw
-            ) * 1.2
-        }
-        : {
-            maxPitchUp: LOOK_AWAY_THRESHOLDS.MAX_PITCH_UP,
-            maxPitchDown: LOOK_AWAY_THRESHOLDS.MAX_PITCH_DOWN,
-            maxYaw: LOOK_AWAY_THRESHOLDS.MAX_YAW
-        };
+    const thresholds = {
+        maxPitchUp: LOOK_AWAY_THRESHOLDS.MAX_PITCH_UP,
+        maxPitchDown: LOOK_AWAY_THRESHOLDS.MAX_PITCH_DOWN,
+        maxYaw: LOOK_AWAY_THRESHOLDS.MAX_YAW
+    };
 
     // Determine primary direction
     let direction: 'up' | 'down' | 'left' | 'right' | 'center' = 'center';

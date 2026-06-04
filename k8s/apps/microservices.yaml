@@ -1,0 +1,547 @@
+# ==========================================
+# 1. Authorization Server (auth-server)
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: authorization-server
+  namespace: exam-platform
+spec:
+  ports:
+    - port: 9000
+      targetPort: 9000
+  selector:
+    app: authorization-server
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authorization-server
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authorization-server
+  template:
+    metadata:
+      labels:
+        app: authorization-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "9000"
+    spec:
+      serviceAccountName: auth-server
+      containers:
+        - name: authorization-server
+          image: exam-auth-server:latest # locally built
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xms192M -Xmx384M -XX:+UseG1GC"
+            - name: OAUTH_DB_URL
+              value: jdbc:postgresql://postgres:5432/identity_db?sslmode=disable
+            - name: OAUTH_DB_USERNAME
+              value: postgres
+            - name: OAUTH_DB_PASSWORD
+              value: postgres
+            - name: AS_ISSUER_URI
+              value: http://authorization-server:9000
+            - name: AS_ALLOWED_ORIGINS
+              value: http://localhost:5173,http://localhost:5174
+            - name: BFF_CLIENT_ID
+              value: exam-bff-client
+            - name: BFF_CLIENT_SECRET
+              value: exam-bff-secret
+          ports:
+            - containerPort: 9000
+---
+# ==========================================
+# 2. User Service (user-service)
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: exam-platform
+spec:
+  ports:
+    - name: http
+      port: 8100
+      targetPort: 8100
+    - name: grpc
+      port: 9090
+      targetPort: 9090
+  selector:
+    app: user-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8100"
+    spec:
+      serviceAccountName: user-service
+      containers:
+        - name: user-service
+          image: exam-user-service:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xms128M -Xmx256M -XX:+UseG1GC"
+            - name: UMS_DB_URL
+              value: jdbc:postgresql://postgres:5432/identity_db?sslmode=disable
+            - name: UMS_DB_USERNAME
+              value: postgres
+            - name: UMS_DB_PASSWORD
+              value: postgres
+            - name: AS_ISSUER_URI
+              value: http://authorization-server:9000
+            - name: AS_JWK_SET_URI
+              value: http://authorization-server:9000/oauth2/jwks
+            - name: GRPC_SERVER_PORT
+              value: "9090"
+          ports:
+            - containerPort: 8100
+            - containerPort: 9090
+---
+# ==========================================
+# 3. Admin Service (admin-service)
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-service
+  namespace: exam-platform
+spec:
+  ports:
+    - port: 8200
+      targetPort: 8200
+  selector:
+    app: admin-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-service
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-service
+  template:
+    metadata:
+      labels:
+        app: admin-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8200"
+    spec:
+      serviceAccountName: admin-service
+      containers:
+        - name: admin-service
+          image: exam-admin-service:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xms128M -Xmx256M -XX:+UseG1GC"
+            - name: OAUTH_DB_URL
+              value: jdbc:postgresql://postgres:5432/identity_db?sslmode=disable
+            - name: OAUTH_DB_USERNAME
+              value: postgres
+            - name: OAUTH_DB_PASSWORD
+              value: postgres
+            - name: AS_ISSUER_URI
+              value: http://authorization-server:9000
+            - name: AS_JWK_SET_URI
+              value: http://authorization-server:9000/oauth2/jwks
+            - name: APP_SERVICES_USER_SERVICE_URL
+              value: http://user-service:8100
+            - name: GRPC_USER_SERVICE_ADDRESS
+              value: static://user-service:9090
+          ports:
+            - containerPort: 8200
+---
+# ==========================================
+# 4. Session Service (session-service)
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-service
+  namespace: exam-platform
+spec:
+  ports:
+    - port: 8081
+      targetPort: 8081
+  selector:
+    app: session-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-service
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: session-service
+  template:
+    metadata:
+      labels:
+        app: session-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8081"
+    spec:
+      serviceAccountName: session-service
+      containers:
+        - name: session-service
+          image: exam-session-service:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "768Mi"
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xms256M -Xmx512M -XX:+UseG1GC"
+            - name: SERVER_PORT
+              value: "8081"
+            - name: SERVER_TOMCAT_THREADS_MAX
+              value: "400"
+            - name: SERVER_TOMCAT_THREADS_MIN_SPARE
+              value: "50"
+            - name: SERVER_TOMCAT_ACCEPT_COUNT
+              value: "1000"
+            - name: SERVER_TOMCAT_MAX_CONNECTIONS
+              value: "8192"
+            - name: PRIMARY_DB_URL
+              value: jdbc:postgresql://session-pgbouncer-primary-service:6432/session_db?sslmode=disable&reWriteBatchedInserts=true
+            - name: PRIMARY_DB_USERNAME
+              value: postgres
+            - name: PRIMARY_DB_PASSWORD
+              value: postgres
+            - name: REPLICA_DB_URL
+              value: jdbc:postgresql://session-pgbouncer-replica-service:6432/session_db?sslmode=disable&reWriteBatchedInserts=true
+            - name: REPLICA_DB_USERNAME
+              value: postgres
+            - name: REPLICA_DB_PASSWORD
+              value: postgres
+            - name: SPRING_JPA_PROPERTIES_HIBERNATE_JDBC_BATCH_SIZE
+              value: "50"
+            - name: SPRING_JPA_PROPERTIES_HIBERNATE_ORDER_INSERTS
+              value: "true"
+            - name: SPRING_JPA_PROPERTIES_HIBERNATE_ORDER_UPDATES
+              value: "true"
+            - name: SPRING_DATA_REDIS_HOST
+              value: redis
+            - name: SPRING_DATA_REDIS_PORT
+              value: "6379"
+            - name: SPRING_RABBITMQ_HOST
+              value: rabbitmq
+            - name: SPRING_RABBITMQ_PORT
+              value: "5672"
+            - name: SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI
+              value: http://authorization-server:9000/oauth2/jwks
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_SPRING_TOKEN_URI
+              value: http://authorization-server:9000/oauth2/token
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_SPRING_ISSUER_URI
+              value: http://authorization-server:9000
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:29092
+            - name: MINIO_ENDPOINT
+              value: http://minio:9000
+            - name: MINIO_EXTERNAL_ENDPOINT
+              value: http://localhost:9002
+            - name: MINIO_ACCESS_KEY
+              value: minioadmin
+            - name: MINIO_SECRET_KEY
+              value: minioadmin123
+            - name: LIVEKIT_HOST
+              value: ws://livekit:7880
+            - name: LIVEKIT_API_KEY
+              value: devkey
+            - name: LIVEKIT_API_SECRET
+              value: secret
+            - name: GRPC_INCIDENT_SERVICE_ADDRESS
+              value: static://incident-service:9091
+          ports:
+            - containerPort: 8081
+---
+# ==========================================
+# 5. Incident Service (incident-service)
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: incident-service
+  namespace: exam-platform
+spec:
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+    - name: grpc
+      port: 9091
+      targetPort: 9091
+  selector:
+    app: incident-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: incident-service
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: incident-service
+  template:
+    metadata:
+      labels:
+        app: incident-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8082"
+    spec:
+      serviceAccountName: incident-service
+      containers:
+        - name: incident-service
+          image: exam-incident-service:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xms192M -Xmx384M -XX:+UseG1GC"
+            - name: SERVER_PORT
+              value: "8082"
+            - name: PRIMARY_DB_URL
+              value: jdbc:postgresql://incident-pgbouncer-primary-service:6432/incident_db?sslmode=disable
+            - name: PRIMARY_DB_USERNAME
+              value: postgres
+            - name: PRIMARY_DB_PASSWORD
+              value: postgres
+            - name: REPLICA_DB_URL
+              value: jdbc:postgresql://incident-pgbouncer-replica-service:6432/incident_db?sslmode=disable
+            - name: REPLICA_DB_USERNAME
+              value: postgres
+            - name: REPLICA_DB_PASSWORD
+              value: postgres
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:29092
+            - name: SPRING_RABBITMQ_HOST
+              value: rabbitmq
+            - name: SPRING_RABBITMQ_PORT
+              value: "5672"
+            - name: SPRING_RABBITMQ_USERNAME
+              value: guest
+            - name: SPRING_RABBITMQ_PASSWORD
+              value: guest
+            - name: OAUTH_JWK_SET_URI
+              value: http://authorization-server:9000/oauth2/jwks
+            - name: OAUTH_ISSUER_URI
+              value: http://authorization-server:9000
+            - name: GRPC_SERVER_PORT
+              value: "9091"
+          ports:
+            - containerPort: 8082
+            - containerPort: 9091
+---
+# ==========================================
+# 6. BFF Gateway (bff-gateway)
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff-gateway
+  namespace: exam-platform
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: bff-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff-gateway
+  namespace: exam-platform
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bff-gateway
+  template:
+    metadata:
+      labels:
+        app: bff-gateway
+    spec:
+      serviceAccountName: bff-gateway
+      containers:
+        - name: bff-gateway
+          image: exam-bff:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"
+          env:
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=384"
+            - name: NODE_ENV
+              value: production
+            - name: NEXTAUTH_URL
+              value: http://localhost:8080
+            - name: NEXTAUTH_SECRET
+              value: 8f4b2e9a1d3c5f6e7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f
+            - name: BFF_CLIENT_ID
+              value: exam-bff-client
+            - name: BFF_CLIENT_SECRET
+              value: exam-bff-secret
+            - name: AUTH_SERVER_ISSUER
+              value: http://authorization-server:9000
+            - name: AUTH_SERVER_TOKEN_URL
+              value: http://authorization-server:9000/oauth2/token
+            - name: AUTH_SERVER_USERINFO_URL
+              value: http://authorization-server:9000/userinfo
+            - name: AUTH_SERVER_URL
+              value: http://authorization-server:9000
+            - name: AUTH_SERVER_EXTERNAL_URL
+              value: http://localhost:9000
+            - name: UPSTREAM_API_BASE_URL
+              value: http://user-service:8100
+            - name: SESSION_SERVICE_URL
+              value: http://session-service:8081
+            - name: BFF_SCOPES
+              value: openid profile offline_access
+            - name: BFF_SESSION_COOKIE
+              value: SESSION_ID
+            - name: BFF_DB_HOST
+              value: postgres
+            - name: BFF_DB_PORT
+              value: "5432"
+            - name: BFF_DB_NAME
+              value: bff_db
+            - name: BFF_DB_USER
+              value: postgres
+            - name: BFF_DB_PASSWORD
+              value: postgres
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
+            - name: INCIDENT_SERVICE_URL
+              value: http://incident-service:8082
+            - name: ADMIN_SERVICE_URL
+              value: http://admin-service:8200
+            - name: SECURE_COOKIE
+              value: "false"
+            - name: BFF_PROXY_CONNECT_TIMEOUT_MS
+              value: "60000"
+            - name: BFF_PROXY_HEADERS_TIMEOUT_MS
+              value: "120000"
+            - name: BFF_PROXY_BODY_TIMEOUT_MS
+              value: "120000"
+            - name: BFF_PROXY_CONNECTIONS
+              value: "256"
+          ports:
+            - containerPort: 8080
+---
+# ==========================================
+# 7. AI Worker (ai-worker)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-worker
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-worker
+  template:
+    metadata:
+      labels:
+        app: ai-worker
+    spec:
+      containers:
+        - name: ai-worker
+          image: exam-ai-worker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: RABBITMQ_USER
+              value: guest
+            - name: RABBITMQ_PASS
+              value: guest
+            - name: MINIO_ENDPOINT
+              value: http://minio:9000
+            - name: MINIO_ACCESS_KEY
+              value: minioadmin
+            - name: MINIO_SECRET_KEY
+              value: minioadmin123
+            - name: MINIO_BUCKET
+              value: exam-identity
+            - name: FACE_VERIFICATION_THRESHOLD
+              value: "0.6"
+            - name: USE_GPU
+              value: "false"

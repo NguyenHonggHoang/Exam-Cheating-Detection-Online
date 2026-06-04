@@ -1,0 +1,245 @@
+import asyncio
+import aiohttp
+import time
+import sys
+import argparse
+import random
+import uuid
+import base64
+
+# Default values
+DEFAULT_EXAM_ID = "e1000000-0000-0000-0000-000000000001"
+VIOLATION_TYPES = ["TAB_SWITCH", "LOOKING_AWAY", "MULTIPLE_FACES", "NO_FACE", "PASTE", "BLUR"]
+VIOLATION_STATES = ["WARN", "SUSPICIOUS", "CRITICAL"]
+
+# Base64 encoded 'session-service:session-secret'
+DEFAULT_BASIC_AUTH = "c2Vzc2lvbi1zZXJ2aWNlOnNlc3Npb24tc2VjcmV0"
+
+async def fetch_oauth2_token(auth_host):
+    url = f"{auth_host}/oauth2/token"
+    headers = {
+        'Authorization': f'Basic {DEFAULT_BASIC_AUTH}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    # Omit scope to let Auth Server apply default configured scopes automatically
+    data = {
+        'grant_type': 'client_credentials'
+    }
+    
+    print(f"Attempting to fetch JWT Token from Auth Server: {url}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=data, headers=headers, timeout=5) as response:
+                if response.status == 200:
+                    res_json = await response.json()
+                    token = res_json.get("access_token")
+                    if token:
+                        print("✅ JWT Token successfully retrieved from Authorization Server.")
+                        return token
+                print(f"⚠️ Auth Server returned status: {response.status}")
+                body = await response.text()
+                print(f"Response Body: {body[:200]}")
+    except Exception as e:
+        print(f"❌ Failed to connect to Auth Server at {url}: {type(e).__name__} - {e}")
+    return None
+
+async def send_exam_request(session, url, token, stats):
+    headers = {}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+        
+    start_time = time.time()
+    try:
+        async with session.get(url, headers=headers, timeout=10) as response:
+            latency = (time.time() - start_time) * 1000  # ms
+            status = response.status
+            if status == 200:
+                stats['success'] += 1
+                stats['latencies'].append(latency)
+            else:
+                stats['failed'] += 1
+                stats['errors'][status] = stats['errors'].get(status, 0) + 1
+    except asyncio.TimeoutError:
+        stats['failed'] += 1
+        stats['errors']['Timeout'] = stats['errors'].get('Timeout', 0) + 1
+    except Exception as e:
+        stats['failed'] += 1
+        err_name = type(e).__name__
+        stats['errors'][err_name] = stats['errors'].get(err_name, 0) + 1
+
+async def send_incident_request(session, url, token, session_ids, stats):
+    session_id = random.choice(session_ids) if session_ids else str(uuid.uuid4())
+    
+    payload = {
+        "sessionId": session_id,
+        "violationType": random.choice(VIOLATION_TYPES),
+        "violationState": random.choice(VIOLATION_STATES),
+        "evidenceUrl": f"http://minio:9000/exam-evidence/{session_id}/snapshot.jpg",
+        "objectKey": f"{session_id}/snapshot.jpg",
+        "fileSize": random.randint(50000, 250000),
+        "timestamp": int(time.time() * 1000)
+    }
+    
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+        
+    start_time = time.time()
+    try:
+        async with session.post(url, json=payload, headers=headers, timeout=5) as response:
+            latency = (time.time() - start_time) * 1000  # ms
+            status = response.status
+            if status in [200, 201, 202]:
+                stats['success'] += 1
+                stats['latencies'].append(latency)
+            else:
+                stats['failed'] += 1
+                stats['errors'][status] = stats['errors'].get(status, 0) + 1
+    except asyncio.TimeoutError:
+        stats['failed'] += 1
+        stats['errors']['Timeout'] = stats['errors'].get('Timeout', 0) + 1
+    except Exception as e:
+        stats['failed'] += 1
+        err_name = type(e).__name__
+        stats['errors'][err_name] = stats['errors'].get(err_name, 0) + 1
+
+async def exam_worker(session, url, token, stats, stop_event):
+    while not stop_event.is_set():
+        await send_exam_request(session, url, token, stats)
+        await asyncio.sleep(0.1)
+
+async def incident_worker(session, url, token, session_ids, stats, stop_event):
+    while not stop_event.is_set():
+        start_worker_time = time.time()
+        await send_incident_request(session, url, token, session_ids, stats)
+        elapsed = time.time() - start_worker_time
+        sleep_time = max(0, 0.1 - elapsed)
+        await asyncio.sleep(sleep_time)
+
+async def run_load_test(args):
+    print("="*65)
+    print(f"      EXAM CHEATING DETECTION PERFORMANCE LOAD TEST TOOL      ")
+    print("="*65)
+    print(f"Mode:              {args.mode.upper()}")
+    
+    # Resolve Token
+    token = args.token
+    if not token and args.auth_host:
+        token = await fetch_oauth2_token(args.auth_host)
+        
+    if not token:
+        print("⚠️ Warning: Running WITHOUT Authentication JWT Token. Requests might fail.")
+    else:
+        print(f"JWT Token:         ACTIVE ({token[:20]}...{token[-10:]})")
+        
+    if args.mode == "exam":
+        url = f"{args.host_exam}/api/mock-exam/{args.exam_id}/questions"
+        if args.paged:
+            url += "/paged?page=0&size=20"
+        print(f"Target URL:        {url}")
+        print(f"Concurrent Users:  {args.users}")
+    else:
+        url = f"{args.host_incident}/api/incident/client-event"
+        print(f"Target URL:        {url}")
+        print(f"Concurrent Users:  {args.users} (Target: {args.users * 10} req/s total)")
+        print(f"RPS per User:      10 req/s (100ms interval)")
+        
+    print(f"Duration:          {args.duration} seconds")
+    print("="*65)
+    print("Starting load warm-up...")
+    
+    session_ids = [str(uuid.uuid4()) for _ in range(50)]
+    stats = {
+        'success': 0,
+        'failed': 0,
+        'latencies': [],
+        'errors': {}
+    }
+    
+    connector = aiohttp.TCPConnector(limit=args.users, ttl_dns_cache=300)
+    stop_event = asyncio.Event()
+    start_test_time = time.time()
+    
+    async with aiohttp.ClientSession(connector=connector) as session:
+        workers = []
+        for i in range(args.users):
+            if args.mode == "exam":
+                workers.append(asyncio.create_task(exam_worker(session, url, token, stats, stop_event)))
+            else:
+                workers.append(asyncio.create_task(incident_worker(session, url, token, session_ids, stats, stop_event)))
+                
+            if i % 100 == 0 and i > 0:
+                await asyncio.sleep(0.05)
+                
+        print(f"All {args.users} workers successfully spawned and running.")
+        await asyncio.sleep(args.duration)
+        
+        print("Stopping workers, gathering final requests...")
+        stop_event.set()
+        await asyncio.gather(*workers, return_exceptions=True)
+        
+    total_duration = time.time() - start_test_time
+    latencies = stats['latencies']
+    total_requests = stats['success'] + stats['failed']
+    
+    print("\n" + "="*50)
+    print(f"             LOAD TEST PERFORMANCE REPORT             ")
+    print("="*50)
+    print(f"Test Duration:       {total_duration:.2f} seconds")
+    print(f"Total Requests Sent: {total_requests}")
+    print(f"Successful Requests: {stats['success']} ({(stats['success']/total_requests*100) if total_requests > 0 else 0:.2f}%)")
+    print(f"Failed Requests:     {stats['failed']} ({(stats['failed']/total_requests*100) if total_requests > 0 else 0:.2f}%)")
+    
+    if stats['errors']:
+        print("\nError Statistics:")
+        for err, count in stats['errors'].items():
+            print(f"  - Error [{err}]: {count} occurrences")
+            
+    if latencies:
+        latencies.sort()
+        avg_latency = sum(latencies) / len(latencies)
+        p50 = latencies[int(len(latencies) * 0.50)]
+        p95 = latencies[int(len(latencies) * 0.95)]
+        p99 = latencies[int(len(latencies) * 0.99)]
+        rps = len(latencies) / total_duration
+        
+        print("\nLatency Metrics:")
+        print(f"  - Actual Throughput (RPS): {rps:.2f} req/s")
+        print(f"  - Avg Latency:              {avg_latency:.2f} ms")
+        print(f"  - p50 (Median):             {p50:.2f} ms")
+        print(f"  - p95 (95th percentile):    {p95:.2f} ms")
+        print(f"  - p99 (99th percentile):    {p99:.2f} ms")
+    else:
+        print("\nNo performance latency statistics available (no successful requests).")
+    print("="*50)
+
+def main():
+    parser = argparse.ArgumentParser(description="Performance Load Testing Tool for Session and Incident Services")
+    parser.add_argument("--mode", choices=["exam", "incident"], default="exam", 
+                        help="Testing target API. 'exam' = load questions, 'incident' = submit client events.")
+    parser.add_argument("--host-exam", default="http://localhost:8081", 
+                        help="Session service host URL")
+    parser.add_argument("--host-incident", default="http://localhost:8082", 
+                        help="Incident service host URL")
+    parser.add_argument("--auth-host", default="http://localhost:9000", 
+                        help="Authorization server host URL to retrieve JWT Token")
+    parser.add_argument("--token", default=None, 
+                        help="Pre-configured JWT Bearer Token (skips auth-host token fetch)")
+    parser.add_argument("--users", type=int, default=None, 
+                        help="Number of concurrent users")
+    parser.add_argument("--duration", type=int, default=30, 
+                        help="Duration of the test in seconds")
+    parser.add_argument("--exam-id", default=DEFAULT_EXAM_ID, 
+                        help="Exam UUID to query questions for")
+    parser.add_argument("--paged", action="store_true", 
+                        help="Query the newly implemented paginated endpoint (/questions/paged) instead of full list")
+    
+    args = parser.parse_args()
+    
+    if args.users is None:
+        args.users = 1000 if args.mode == "exam" else 100
+        
+    asyncio.run(run_load_test(args))
+
+if __name__ == "__main__":
+    main()

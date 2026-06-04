@@ -1,9 +1,9 @@
 # Stage 1: Build
-FROM gradle:8-jdk17-alpine AS builder
+FROM gradle:8-jdk17 AS builder
 WORKDIR /app
 COPY build.gradle settings.gradle gradle.properties ./
 COPY src ./src
-RUN gradle build --no-daemon -x test
+RUN --mount=type=cache,target=/home/gradle/.gradle gradle build --no-daemon -x test
 
 # Stage 2: Run
 FROM eclipse-temurin:17-jre-alpine

@@ -2,6 +2,7 @@ package com.example.exam.messaging;
 
 import com.example.exam.model.SessionShadowEntity;
 import com.example.exam.model.UserShadowEntity;
+import com.example.exam.repository.IncidentRepository;
 import com.example.exam.repository.SessionShadowRepository;
 import com.example.exam.repository.UserShadowRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -18,25 +19,26 @@ import java.util.UUID;
 
 /**
  * Data Sync Consumer - Incident Service
- * 
+ *
  * Consumes CDC events from Debezium (with ExtractNewRecordState transform)
  * and maintains shadow tables for local queries.
- * 
+ *
  * Topics:
  * - exam-session.public.sessions → SessionShadowEntity
- * - exam-identity.public.users → UserShadowEntity
- * 
+ * - exam-identity.public.users  → UserShadowEntity
+ *
  * NOTE: Debezium uses ExtractNewRecordState transform, so events are UNWRAPPED
  * (no payload.before/after, fields are at root level with __op, __deleted fields)
  */
 @Component
 @RequiredArgsConstructor
 public class DataSyncConsumer {
-    
+
     private static final Logger log = LoggerFactory.getLogger(DataSyncConsumer.class);
-    
+
     private final SessionShadowRepository sessionShadowRepository;
     private final UserShadowRepository userShadowRepository;
+    private final IncidentRepository incidentRepository;
     private final ObjectMapper objectMapper;
     
     // ==================== SESSION CDC ====================
@@ -156,19 +158,33 @@ public class DataSyncConsumer {
     }
 
     /**
-     * Auto-close open incidents when session ends
+     * Auto-close open (PENDING) incidents when the session ends.
+     *
+     * Uses a single bulk UPDATE instead of load-iterate-save to handle sessions
+     * that may have accumulated hundreds of incidents during a long exam.
+     *
+     * The target status is "SESSION_ENDED" (not "REVIEWED" or "DISMISSED") so that
+     * proctors can distinguish auto-closed incidents from human-reviewed ones.
      */
-    private void handleSessionEnded(UUID sessionId) {
-        log.info("[CDC Session] Session ended, checking for open incidents: sessionId={}", sessionId);
-        
-        // TODO: Implement auto-close logic
-        // Example:
-        // List<Incident> openIncidents = incidentRepository.findBySessionIdAndStatus(sessionId, "OPEN");
-        // for (Incident incident : openIncidents) {
-        //     incident.setStatus("AUTO_CLOSED");
-        //     incident.setClosedReason("Session ended");
-        //     incidentRepository.save(incident);
-        // }
+    @Transactional
+    protected void handleSessionEnded(UUID sessionId) {
+        log.info("[CDC Session] Session ended — bulk-closing PENDING incidents: sessionId={}", sessionId);
+        try {
+            int updated = incidentRepository.bulkCloseBySessionId(
+                    sessionId,
+                    "SESSION_ENDED",
+                    Instant.now()
+            );
+            if (updated > 0) {
+                log.info("[CDC Session] ✅ Auto-closed {} PENDING incident(s) for session={}", updated, sessionId);
+            } else {
+                log.debug("[CDC Session] No PENDING incidents to close for session={}", sessionId);
+            }
+        } catch (Exception e) {
+            log.error("[CDC Session] Failed to auto-close incidents for session={}", sessionId, e);
+            // Non-fatal: the CDC event is already committed; do not rethrow
+            // so Kafka does not redeliver the session-end event indefinitely.
+        }
     }
     
     // ==================== USER CDC ====================

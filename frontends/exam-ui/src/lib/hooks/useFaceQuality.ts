@@ -1,15 +1,4 @@
-/**
- * useFaceQuality Hook
- * 
- * React hook for real-time face quality detection during exam verification.
- * Uses TensorFlow.js face-landmarks-detection for face analysis.
- * 
- * Features:
- * - Real-time face quality metrics
- * - Oval frame positioning check
- * - Lighting and sharpness analysis
- * - Capture functionality with quality validation
- */
+
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as faceLandmarksDetection from '@tensorflow-models/face-landmarks-detection';
@@ -204,7 +193,7 @@ export function useFaceQuality({
                     z: (kp as any).z || 0,
                 }));
 
-                const headPose = calculateHeadPose(landmarks, null);
+                const headPose = calculateHeadPose(landmarks);
                 const eyeState = calculateEyeAspectRatio(landmarks);
 
                 const faceSizePercent = calculateFaceSizePercent(faceBbox, canvas.width, canvas.height);

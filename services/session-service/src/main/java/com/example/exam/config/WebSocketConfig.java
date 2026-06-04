@@ -20,21 +20,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
-        // Enable simple broker for subscriptions
-        // /topic - for broadcast messages
-        // /queue - for user-specific messages
         config.enableSimpleBroker("/topic", "/queue");
         
-        // Prefix for messages from clients to server
         config.setApplicationDestinationPrefixes("/app");
         
-        // Prefix for user-specific destinations
         config.setUserDestinationPrefix("/user");
     }
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // WebSocket endpoint with SockJS fallback
         registry.addEndpoint("/ws")
                 .setAllowedOrigins(
                     "http://localhost:5173",
@@ -43,7 +37,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 )
                 .withSockJS();
         
-        // Raw WebSocket endpoint (no SockJS)
         registry.addEndpoint("/ws")
                 .setAllowedOrigins(
                     "http://localhost:5173",

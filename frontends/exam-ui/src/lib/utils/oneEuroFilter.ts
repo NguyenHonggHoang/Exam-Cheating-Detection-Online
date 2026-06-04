@@ -1,18 +1,3 @@
-/**
- * One Euro Filter Implementation
- * 
- * A low-pass filter designed to smooth noisy signals while minimizing latency.
- * Perfect for real-time landmark tracking where we need responsiveness but
- * also want to reduce jitter.
- * 
- * Paper: "1€ Filter: A Simple Speed-based Low-pass Filter for Noisy Input in Interactive Systems"
- * 
- * Key features:
- * - Adaptive cutoff frequency: faster movements = less filtering = less lag
- * - Slower movements = more filtering = smoother output
- * - Tunable via minCutoff (jitter reduction) and beta (lag reduction)
- */
-
 export interface OneEuroFilterConfig {
     /** Minimum cutoff frequency (Hz). Lower = more smoothing for slow movements. Default: 1.0 */
     minCutoff?: number;
@@ -28,17 +13,11 @@ interface LowPassFilter {
     initialized: boolean;
 }
 
-/**
- * Compute filter alpha from cutoff frequency and sampling rate
- */
 function smoothingFactor(te: number, cutoff: number): number {
     const r = 2 * Math.PI * cutoff * te;
     return r / (r + 1);
 }
 
-/**
- * Apply low pass filter to new value
- */
 function lowPassFilter(
     filter: LowPassFilter,
     x: number,
@@ -53,9 +32,6 @@ function lowPassFilter(
     return filter.y;
 }
 
-/**
- * One Euro Filter for a single value
- */
 export class OneEuroFilter {
     private readonly minCutoff: number;
     private readonly beta: number;

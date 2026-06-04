@@ -77,7 +77,7 @@ export const authOptions = {
       authorization: {
         url: `${process.env.AUTH_SERVER_EXTERNAL_URL || "http://localhost:9000"}/oauth2/authorize`,
         params: {
-          scope: "openid profile exam.read exam.write offline_access",
+          scope: "openid profile offline_access",
         }
       },
       token: {
@@ -221,12 +221,50 @@ export const authOptions = {
   },
   cookies: {
     sessionToken: {
-      name: process.env.BFF_SESSION_COOKIE || `next-auth.session-token`,
+      name: process.env.BFF_SESSION_COOKIE || (process.env.SECURE_COOKIE === 'false' ? 'next-auth.session-token' : '__Secure-next-auth.session-token'),
       options: {
         httpOnly: true,
         sameSite: "lax",
         path: "/",
-        secure: process.env.NODE_ENV === 'production',
+        secure: process.env.SECURE_COOKIE !== 'false' && process.env.NODE_ENV === 'production',
+      },
+    },
+    callbackUrl: {
+      name: process.env.SECURE_COOKIE === 'false' ? 'next-auth.callback-url' : '__Secure-next-auth.callback-url',
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.SECURE_COOKIE !== 'false' && process.env.NODE_ENV === 'production',
+      },
+    },
+    csrfToken: {
+      name: process.env.SECURE_COOKIE === 'false' ? 'next-auth.csrf-token' : '__Host-next-auth.csrf-token',
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.SECURE_COOKIE !== 'false' && process.env.NODE_ENV === 'production',
+      },
+    },
+    pkceCodeVerifier: {
+      name: process.env.SECURE_COOKIE === 'false' ? 'next-auth.pkce.code_verifier' : '__Secure-next-auth.pkce.code_verifier',
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.SECURE_COOKIE !== 'false' && process.env.NODE_ENV === 'production',
+        maxAge: 900
+      },
+    },
+    state: {
+      name: process.env.SECURE_COOKIE === 'false' ? 'next-auth.state' : '__Secure-next-auth.state',
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.SECURE_COOKIE !== 'false' && process.env.NODE_ENV === 'production',
+        maxAge: 900
       },
     },
   },

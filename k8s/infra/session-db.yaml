@@ -1,0 +1,260 @@
+# =======================================================
+# 1. PostgreSQL Primary (Master) StatefulSet & Service
+# =======================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-db-primary-service
+  namespace: exam-platform
+spec:
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  selector:
+    app: session-db-primary
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: session-db-primary
+  namespace: exam-platform
+spec:
+  serviceName: session-db-primary-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: session-db-primary
+  template:
+    metadata:
+      labels:
+        app: session-db-primary
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      securityContext:
+        fsGroup: 1001
+      containers:
+        - name: postgres
+          image: bitnami/postgresql:latest
+          env:
+            - name: POSTGRESQL_REPLICATION_MODE
+              value: "master"
+            - name: POSTGRESQL_REPLICATION_USER
+              value: "repl_user"
+            - name: POSTGRESQL_REPLICATION_PASSWORD
+              value: "repl_password456"
+            - name: POSTGRESQL_USERNAME
+              value: "postgres"
+            - name: POSTGRESQL_PASSWORD
+              value: "postgres"
+            - name: POSTGRESQL_DATABASE
+              value: "session_db"
+            - name: POSTGRESQL_WAL_LEVEL
+              value: "logical"
+            - name: POSTGRESQL_MAX_WAL_SENDERS
+              value: "10"
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /bitnami/postgresql
+      volumes:
+        - name: data
+          emptyDir: {}
+
+---
+# =======================================================
+# 2. PostgreSQL Replica (Slave) StatefulSet & Service
+# =======================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-db-replica-service
+  namespace: exam-platform
+spec:
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  selector:
+    app: session-db-replica
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: session-db-replica
+  namespace: exam-platform
+spec:
+  serviceName: session-db-replica-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: session-db-replica
+  template:
+    metadata:
+      labels:
+        app: session-db-replica
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      securityContext:
+        fsGroup: 1001
+      containers:
+        - name: postgres
+          image: bitnami/postgresql:latest
+          env:
+            - name: POSTGRESQL_REPLICATION_MODE
+              value: "slave"
+            - name: POSTGRESQL_MASTER_HOST
+              value: "session-db-primary-service"
+            - name: POSTGRESQL_MASTER_PORT_NUMBER
+              value: "5432"
+            - name: POSTGRESQL_REPLICATION_USER
+              value: "repl_user"
+            - name: POSTGRESQL_REPLICATION_PASSWORD
+              value: "repl_password456"
+            - name: POSTGRESQL_PASSWORD
+              value: "postgres"
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /bitnami/postgresql
+      volumes:
+        - name: data
+          emptyDir: {}
+
+---
+# =======================================================
+# 3. PgBouncer for Primary Database Deployment & Service
+# =======================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-pgbouncer-primary-service
+  namespace: exam-platform
+spec:
+  ports:
+    - name: pgbouncer
+      port: 6432
+      targetPort: 6432
+  selector:
+    app: session-pgbouncer-primary
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-pgbouncer-primary
+  namespace: exam-platform
+  labels:
+    app: session-pgbouncer-primary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: session-pgbouncer-primary
+  template:
+    metadata:
+      labels:
+        app: session-pgbouncer-primary
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:latest
+          env:
+            - name: DB_HOST
+              value: "session-db-primary-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: "postgres"
+            - name: DB_PASSWORD
+              value: "postgres"
+            - name: DB_NAME
+              value: "session_db"
+            - name: LISTEN_PORT
+              value: "6432"
+            - name: AUTH_TYPE
+              value: "scram-sha-256"
+            - name: POOL_MODE
+              value: "transaction"
+            - name: MAX_CLIENT_CONN
+              value: "1000"
+            - name: DEFAULT_POOL_SIZE
+              value: "50"
+          ports:
+            - containerPort: 6432
+              name: pgbouncer
+
+---
+# =======================================================
+# 4. PgBouncer for Replica Database Deployment & Service
+# =======================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-pgbouncer-replica-service
+  namespace: exam-platform
+spec:
+  ports:
+    - name: pgbouncer
+      port: 6432
+      targetPort: 6432
+  selector:
+    app: session-pgbouncer-replica
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-pgbouncer-replica
+  namespace: exam-platform
+  labels:
+    app: session-pgbouncer-replica
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: session-pgbouncer-replica
+  template:
+    metadata:
+      labels:
+        app: session-pgbouncer-replica
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:latest
+          env:
+            - name: DB_HOST
+              value: "session-db-replica-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: "postgres"
+            - name: DB_PASSWORD
+              value: "postgres"
+            - name: DB_NAME
+              value: "session_db"
+            - name: LISTEN_PORT
+              value: "6432"
+            - name: AUTH_TYPE
+              value: "scram-sha-256"
+            - name: POOL_MODE
+              value: "transaction"
+            - name: MAX_CLIENT_CONN
+              value: "1000"
+            - name: DEFAULT_POOL_SIZE
+              value: "50"
+          ports:
+            - containerPort: 6432
+              name: pgbouncer

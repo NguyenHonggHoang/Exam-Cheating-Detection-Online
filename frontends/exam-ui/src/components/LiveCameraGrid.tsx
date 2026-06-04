@@ -146,10 +146,10 @@ function StudentCamera({ session, isSelected, isExpanded, onSelect, onExpand }: 
                     setToken(data.token);
                     // Fix internal Docker URL to localhost
                     const url = (data.wsUrl || '')
-                        .replace('ws://livekit:7880', 'ws://localhost:7880')
-                        .replace('wss://livekit:7880', 'wss://localhost:7880')
-                        .replace('ws://host.docker.internal:7880', 'ws://localhost:7880')
-                        .replace('wss://host.docker.internal:7880', 'wss://localhost:7880');
+                        .replace('ws://host.docker.internal:', 'ws://localhost:')
+                        .replace('wss://host.docker.internal:', 'wss://localhost:')
+                        .replace('ws://livekit:', 'ws://localhost:')
+                        .replace('wss://livekit:', 'wss://localhost:');
                     console.log(`[Proctor] Token received, wsUrl: ${url}`);
                     setWsUrl(url);
                 }
@@ -343,8 +343,7 @@ function RoomContent({
                 source: videoTrack.source,
                 participant: videoTrack.participant?.identity,
                 hasTrack: 'track' in videoTrack && !!videoTrack.track,
-                isSubscribed: 'publication' in videoTrack && videoTrack.publication?.isSubscribed,
-                trackEnabled: 'track' in videoTrack && videoTrack.track?.isEnabled
+                isSubscribed: 'publication' in videoTrack && videoTrack.publication?.isSubscribed
             });
         } else {
             console.log(`[RoomContent] ⚠️ No videoTrack found. Available tracks:`, tracks.map(t => ({

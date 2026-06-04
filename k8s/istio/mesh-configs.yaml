@@ -1,0 +1,178 @@
+# ==========================================
+# 1. PeerAuthentication - PERMISSIVE mTLS
+# ==========================================
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: exam-platform
+spec:
+  mtls:
+    mode: STRICT # Enforce strict mutual TLS for all microservices in the namespace
+
+---
+# ==========================================
+# 2. DestinationRule for user-service
+# ==========================================
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: user-service
+  namespace: exam-platform
+spec:
+  host: user-service
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL # Envoy automatically handles mTLS handshake
+    connectionPool:
+      tcp:
+        maxConnections: 2000 # Maximum TCP connections
+      http:
+        http1MaxPendingRequests: 1000 # Maximum pending requests before triggering circuit breaker
+        maxRequestsPerConnection: 1000
+    outlierDetection: # Circuit Breaker
+      consecutive5xxErrors: 10 # If 10 consecutive 5xx errors occur
+      interval: 10s # Check every 10 seconds
+      baseEjectionTime: 30s # Eject the failing pod from load balancing pool for 30s
+      maxEjectionPercent: 50
+---
+# ==========================================
+# 3. DestinationRule for incident-service
+# ==========================================
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: incident-service
+  namespace: exam-platform
+spec:
+  host: incident-service
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 2000
+      http:
+        http1MaxPendingRequests: 1000
+        maxRequestsPerConnection: 1000
+    outlierDetection:
+      consecutive5xxErrors: 10
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+---
+# ==========================================
+# 4. Istio AuthorizationPolicies (Mesh Authorization Policy)
+# ==========================================
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: user-service-policy
+  namespace: exam-platform
+spec:
+  selector:
+    matchLabels:
+      app: user-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [
+              "cluster.local/ns/exam-platform/sa/admin-service",
+              "cluster.local/ns/exam-platform/sa/auth-server",
+              "cluster.local/ns/exam-platform/sa/bff-gateway"
+            ]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: incident-service-policy
+  namespace: exam-platform
+spec:
+  selector:
+    matchLabels:
+      app: incident-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [
+              "cluster.local/ns/exam-platform/sa/session-service",
+              "cluster.local/ns/exam-platform/sa/bff-gateway",
+              "cluster.local/ns/exam-platform/sa/default" # for ai-worker
+            ]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: session-service-policy
+  namespace: exam-platform
+spec:
+  selector:
+    matchLabels:
+      app: session-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [
+              "cluster.local/ns/exam-platform/sa/bff-gateway",
+              "cluster.local/ns/exam-platform/sa/default"
+            ]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: authorization-server-policy
+  namespace: exam-platform
+spec:
+  selector:
+    matchLabels:
+      app: authorization-server
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [
+              "cluster.local/ns/exam-platform/sa/bff-gateway",
+              "cluster.local/ns/exam-platform/sa/session-service",
+              "cluster.local/ns/exam-platform/sa/incident-service",
+              "cluster.local/ns/exam-platform/sa/user-service",
+              "cluster.local/ns/exam-platform/sa/admin-service"
+            ]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: admin-service-policy
+  namespace: exam-platform
+spec:
+  selector:
+    matchLabels:
+      app: admin-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [
+              "cluster.local/ns/exam-platform/sa/bff-gateway"
+            ]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: bff-gateway-policy
+  namespace: exam-platform
+spec:
+  selector:
+    matchLabels:
+      app: bff-gateway
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [
+              "cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account",
+              "cluster.local/ns/exam-platform/sa/default",
+              "cluster.local/ns/exam-platform/sa/bff-gateway"
+            ]

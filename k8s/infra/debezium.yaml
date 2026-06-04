@@ -1,0 +1,52 @@
+# ==========================================
+# Debezium Connect CDC Service & Deployment
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: debezium-service
+  namespace: exam-platform
+spec:
+  ports:
+    - port: 8083
+      targetPort: 8083
+  selector:
+    app: debezium
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: debezium
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: debezium
+  template:
+    metadata:
+      labels:
+        app: debezium
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+        - name: debezium
+          image: debezium/connect:2.4
+          env:
+            - name: BOOTSTRAP_SERVERS
+              value: "kafka:29092"
+            - name: GROUP_ID
+              value: "1"
+            - name: CONFIG_STORAGE_TOPIC
+              value: "debezium_configs"
+            - name: OFFSET_STORAGE_TOPIC
+              value: "debezium_offsets"
+            - name: STATUS_STORAGE_TOPIC
+              value: "debezium_statuses"
+            # Ensure JVM options to stay lightweight
+            - name: KAFKA_OPTS
+              value: "-Xms128M -Xmx256M"
+          ports:
+            - containerPort: 8083
+              name: api

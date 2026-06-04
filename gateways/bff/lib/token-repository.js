@@ -1,31 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
-import pkg from 'pg';
-const { Pool } = pkg;
-
-// PostgreSQL connection pool
-let pool = null;
-
-const initializePool = () => {
-  if (!pool) {
-    pool = new Pool({
-      host: process.env.BFF_DB_HOST || 'localhost',
-      port: parseInt(process.env.BFF_DB_PORT || '5432'),
-      database: process.env.BFF_DB_NAME || 'bff_db',
-      user: process.env.BFF_DB_USER || 'postgres',
-      password: process.env.BFF_DB_PASSWORD || 'postgres',
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
-    });
-
-    pool.on('error', (err) => {
-      console.error('Unexpected error on idle PostgreSQL client', err);
-    });
-
-    console.log('[TokenRepository] PostgreSQL connection pool initialized');
-  }
-  return pool;
-};
+import { getRedisClient } from './redis';
 
 const ENCRYPTION_KEY = process.env.BFF_ENCRYPTION_KEY
   ? Buffer.from(process.env.BFF_ENCRYPTION_KEY, 'hex')
@@ -35,6 +9,9 @@ const ALGORITHM = 'aes-256-gcm';
 if (!process.env.BFF_ENCRYPTION_KEY) {
   console.warn('[TokenRepository] WARNING: BFF_ENCRYPTION_KEY not set, using random key (tokens will not persist across restarts)');
 }
+
+const ABSOLUTE_SESSION_TIMEOUT_SECONDS = 24 * 60 * 60; // 24 hours
+const IDLE_TIMEOUT_MILLISECONDS = 30 * 60 * 1000; // 30 minutes
 
 export const TokenRepository = {
   encrypt: (text) => {
@@ -57,134 +34,125 @@ export const TokenRepository = {
 
   async saveRefreshToken(userId, refreshToken) {
     try {
-      const db = initializePool();
+      const redis = getRedisClient();
       const encryptedToken = TokenRepository.encrypt(refreshToken);
+      
+      const now = Date.now();
+      const sessionExpiresAt = now + (ABSOLUTE_SESSION_TIMEOUT_SECONDS * 1000);
 
-      const query = `
-        INSERT INTO refresh_tokens (user_id, encrypted_token, updated_at, last_activity_at, session_expires_at, created_at)
-        VALUES ($1::varchar, $2::text, NOW(), NOW(), NOW() + INTERVAL '24 hours', COALESCE((SELECT created_at FROM refresh_tokens WHERE user_id = $1::varchar), NOW()))
-        ON CONFLICT (user_id) 
-        DO UPDATE SET 
-          encrypted_token = $2::text, 
-          updated_at = NOW(),
-          last_activity_at = NOW(),
-          session_expires_at = COALESCE(EXCLUDED.session_expires_at, (SELECT created_at FROM refresh_tokens WHERE user_id = $1::varchar) + INTERVAL '24 hours')
-      `;
+      const sessionData = {
+        encryptedToken,
+        createdAt: now,
+        lastActivityAt: now,
+        sessionExpiresAt
+      };
 
-      await db.query(query, [userId, encryptedToken]);
-      console.log(`[TokenRepository] Securely stored refresh token in database for user ${userId}`);
+      // Store in Redis with 24 hours TTL (absolute timeout)
+      await redis.set(userId, JSON.stringify(sessionData), 'EX', ABSOLUTE_SESSION_TIMEOUT_SECONDS);
+      console.log(`[TokenRepository][Redis] Securely stored session and refresh token for user ${userId}`);
     } catch (error) {
-      console.error('[TokenRepository] Error saving refresh token:', error);
+      console.error('[TokenRepository][Redis] Error saving refresh token:', error);
       throw error;
     }
   },
 
   async getRefreshToken(userId) {
     try {
-      const db = initializePool();
-      const query = 'SELECT encrypted_token, last_activity_at, session_expires_at FROM refresh_tokens WHERE user_id = $1';
-      const result = await db.query(query, [userId]);
+      const redis = getRedisClient();
+      const data = await redis.get(userId);
 
-      if (result.rows.length === 0) {
-        console.log(`[TokenRepository] No refresh token found for user ${userId}`);
+      if (!data) {
+        console.log(`[TokenRepository][Redis] No session found for user ${userId}`);
         return null;
       }
 
-      const row = result.rows[0];
-      const encryptedToken = row.encrypted_token;
+      const sessionData = JSON.parse(data);
       try {
-        const refreshToken = TokenRepository.decrypt(encryptedToken);
+        const refreshToken = TokenRepository.decrypt(sessionData.encryptedToken);
         return {
           token: refreshToken,
-          lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at).getTime() : null,
-          sessionExpiresAt: row.session_expires_at ? new Date(row.session_expires_at).getTime() : null
+          lastActivityAt: sessionData.lastActivityAt,
+          sessionExpiresAt: sessionData.sessionExpiresAt
         };
       } catch (decryptError) {
-        console.error(`[TokenRepository] Failed to decrypt token for user ${userId}, deleting corrupted token`);
+        console.error(`[TokenRepository][Redis] Failed to decrypt token for user ${userId}, deleting corrupted token`);
         await TokenRepository.deleteRefreshToken(userId);
         return null;
       }
     } catch (error) {
-      console.error('[TokenRepository] Error getting refresh token:', error);
+      console.error('[TokenRepository][Redis] Error getting refresh token:', error);
       return null;
     }
   },
 
   async deleteRefreshToken(userId) {
     try {
-      const db = initializePool();
-      const query = 'DELETE FROM refresh_tokens WHERE user_id = $1';
-      await db.query(query, [userId]);
-      console.log(`[TokenRepository] Revoked refresh token in database for user ${userId}`);
+      const redis = getRedisClient();
+      await redis.del(userId);
+      console.log(`[TokenRepository][Redis] Revoked and deleted session for user ${userId}`);
     } catch (error) {
-      console.error('[TokenRepository] Error deleting refresh token:', error);
+      console.error('[TokenRepository][Redis] Error deleting refresh token:', error);
       throw error;
     }
   },
 
   async updateLastActivity(userId) {
     try {
-      const db = initializePool();
-      const query = `
-        UPDATE refresh_tokens 
-        SET last_activity_at = NOW() 
-        WHERE user_id = $1
-      `;
-      await db.query(query, [userId]);
+      const redis = getRedisClient();
+      const data = await redis.get(userId);
+      
+      if (!data) return;
+
+      const sessionData = JSON.parse(data);
+      const now = Date.now();
+      sessionData.lastActivityAt = now;
+
+      // Calculate remaining TTL to preserve absolute 24h session expiration
+      const remainingMs = sessionData.sessionExpiresAt - now;
+      const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+
+      await redis.set(userId, JSON.stringify(sessionData), 'EX', remainingSeconds);
     } catch (error) {
-      console.error('[TokenRepository] Error updating last activity:', error);
-      // Don't throw - this is not critical
+      console.error('[TokenRepository][Redis] Error updating last activity:', error);
     }
   },
 
   async checkSessionTimeout(userId) {
     try {
-      const db = initializePool();
-      const query = `
-        SELECT last_activity_at, session_expires_at 
-        FROM refresh_tokens 
-        WHERE user_id = $1
-      `;
-      const result = await db.query(query, [userId]);
+      const redis = getRedisClient();
+      const data = await redis.get(userId);
 
-      if (result.rows.length === 0) {
+      if (!data) {
         return { valid: false, reason: 'NoSession' };
       }
 
-      const row = result.rows[0];
+      const sessionData = JSON.parse(data);
       const now = Date.now();
       
-      // Check absolute session timeout (24 hours)
-      if (row.session_expires_at) {
-        const sessionExpiresAt = new Date(row.session_expires_at).getTime();
-        if (now > sessionExpiresAt) {
-          return { valid: false, reason: 'SessionExpired' };
-        }
+      // 1. Check absolute session timeout (24 hours)
+      if (sessionData.sessionExpiresAt && now > sessionData.sessionExpiresAt) {
+        await TokenRepository.deleteRefreshToken(userId);
+        return { valid: false, reason: 'SessionExpired' };
       }
 
-      // Check idle timeout (30 minutes)
-      if (row.last_activity_at) {
-        const lastActivityAt = new Date(row.last_activity_at).getTime();
-        const idleTimeout = 30 * 60 * 1000; // 30 minutes in milliseconds
-        const idleTime = now - lastActivityAt;
-        
-        if (idleTime > idleTimeout) {
+      // 2. Check idle timeout (30 minutes)
+      if (sessionData.lastActivityAt) {
+        const idleTime = now - sessionData.lastActivityAt;
+        if (idleTime > IDLE_TIMEOUT_MILLISECONDS) {
+          await TokenRepository.deleteRefreshToken(userId);
           return { valid: false, reason: 'IdleTimeout' };
         }
       }
 
       return { valid: true };
     } catch (error) {
-      console.error('[TokenRepository] Error checking session timeout:', error);
+      console.error('[TokenRepository][Redis] Error checking session timeout:', error);
       return { valid: false, reason: 'Error' };
     }
   },
 
   async cleanup() {
-    if (pool) {
-      await pool.end();
-      pool = null;
-      console.log('[TokenRepository] PostgreSQL connection pool closed');
-    }
+    // Keep interface for compatibility
+    console.log('[TokenRepository][Redis] Cleanup completed');
   }
 };

@@ -43,6 +43,12 @@ class ApiClient {
           const failingUrl = error.config?.url || 'unknown';
           console.warn(`[ApiClient] 401 Unauthorized on: ${failingUrl}`);
 
+          // Skip automatic login redirection for non-critical telemetry, incidents or media-related operations to prevent eviction
+          if (failingUrl.includes('/incident') || failingUrl.includes('/ingest') || failingUrl.includes('/snapshots')) {
+            console.warn('[ApiClient] Ignored 401 on telemetry/incident/snapshots report to prevent eviction');
+            return Promise.reject(error);
+          }
+
           // Only redirect to login if not already redirecting and not on auth pages
           if (!this.redirectPending && !window.location.pathname.includes('/auth/')) {
             // Debounce redirects - wait 2 seconds before redirecting

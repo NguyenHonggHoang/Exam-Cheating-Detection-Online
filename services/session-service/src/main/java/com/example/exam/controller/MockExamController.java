@@ -10,6 +10,10 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -35,11 +39,28 @@ public class MockExamController {
     }
 
     @GetMapping("/{examId}/questions")
-    @Operation(summary = "Get exam questions", description = "Get list of questions for an exam")
+    @Operation(summary = "Get exam questions (full, cached)",
+               description = "Get the complete list of questions for an exam. " +
+                             "Result is in-memory cached after first load. " +
+                             "For large question banks (500+), prefer the paginated endpoint.")
     public ResponseEntity<MockExamDto.GetQuestionsResponse> getQuestions(
             @PathVariable UUID examId
     ) {
         MockExamDto.GetQuestionsResponse response = mockExamService.getQuestions(examId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{examId}/questions/paged")
+    @Operation(summary = "Get exam questions (paginated)",
+               description = "Paginated question loading. Preferred for exams with large question banks. " +
+                             "Reads from the read replica datasource. " +
+                             "Query params: page (0-based, default 0), size (default 20, max 200).")
+    public ResponseEntity<MockExamDto.GetQuestionsPagedResponse> getQuestionsPaged(
+            @PathVariable UUID examId,
+            @RequestParam(defaultValue = "0")  int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        MockExamDto.GetQuestionsPagedResponse response = mockExamService.getQuestionsPaged(examId, page, size);
         return ResponseEntity.ok(response);
     }
 
@@ -78,6 +99,30 @@ public class MockExamController {
     ) {
         BehaviorAnalysisDto.BehaviorAnalysisResult result = behaviorAnalyzerService.analyzeSession(sessionId);
         return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/batch/start")
+    @Operation(summary = "Start batch exam sessions", description = "Create new exam sessions for a list of students in batch")
+    public Mono<ResponseEntity<List<MockExamDto.StartSessionResponse>>> startSessionBatch(
+            @Valid @RequestBody List<MockExamDto.StartSessionRequest> requests
+    ) {
+        return Flux.fromIterable(requests)
+                .parallel()
+                .runOn(Schedulers.boundedElastic())
+                .map(request -> mockExamService.startSession(request))
+                .sequential()
+                .collectList()
+                .map(ResponseEntity::ok);
+    }
+
+    @PostMapping("/batch/questions")
+    @Operation(summary = "Get batch exam questions", description = "Get questions for a list of exams in batch")
+    public Mono<ResponseEntity<List<MockExamDto.GetQuestionsResponse>>> getQuestionsBatch(
+            @RequestBody List<UUID> examIds
+    ) {
+        return Mono.fromCallable(() -> mockExamService.getQuestionsBatch(examIds))
+                .subscribeOn(Schedulers.boundedElastic())
+                .map(ResponseEntity::ok);
     }
 }
 

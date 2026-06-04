@@ -62,18 +62,15 @@ public class ExamService {
         exam.setDurationMinutes(request.durationMinutes);
         exam.setRetentionDays(request.retentionDays != null ? request.retentionDays : 30);
         
-        // SEB Configuration
         BrowserMode browserMode = parseBrowserMode(request.browserMode);
         exam.setBrowserMode(browserMode);
         
-        // Auto-generate SEB config key if SEB mode is enabled
         if (browserMode != BrowserMode.NORMAL) {
             exam.setSebConfigKey(ExamDto.generateSebConfigKey());
         }
 
         if (request.sebConfig != null) {
             Exam.SebConfig config = new Exam.SebConfig();
-            // Basic settings
             config.setQuitPassword(request.sebConfig.quitPassword);
             config.setAdminPassword(request.sebConfig.adminPassword);
             config.setAllowWifi(request.sebConfig.allowWifi);
@@ -82,7 +79,6 @@ public class ExamService {
             config.setShowTime(request.sebConfig.showTime);
             config.setShowInputLanguage(request.sebConfig.showInputLanguage);
             config.setAllowQuit(request.sebConfig.allowQuit);
-            // Security settings
             config.setDetectVirtualMachine(request.sebConfig.detectVirtualMachine);
             config.setAllowRemoteDesktop(request.sebConfig.allowRemoteDesktop);
             config.setAllowMultipleDisplays(request.sebConfig.allowMultipleDisplays);
@@ -224,7 +220,6 @@ public class ExamService {
                 c.getShowInputLanguage(),
                 c.getAllowQuit()
             );
-            // Add security fields
             sebConfigDto.detectVirtualMachine = c.getDetectVirtualMachine();
             sebConfigDto.allowRemoteDesktop = c.getAllowRemoteDesktop();
             sebConfigDto.allowMultipleDisplays = c.getAllowMultipleDisplays();

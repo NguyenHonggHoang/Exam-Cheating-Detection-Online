@@ -16,31 +16,6 @@ import { calculateIrisGaze, IrisGaze } from './faceAnalysis';
 
 // ========== Types ==========
 
-export interface BaselineData {
-    avgPitch: number;
-    avgYaw: number;
-    avgGaze: { horizontal: number; vertical: number };
-    avgBlinkRate: number;  // Blinks per minute
-    faceBoxCenter: { x: number; y: number };
-    faceBoxArea: number;
-    avgBrightness: number;
-    collectedAt: number;
-    sampleCount: number;
-}
-
-export interface CalibrationIssue {
-    type: 'HEAD_TOO_LOW' | 'HEAD_TOO_HIGH' | 'HEAD_TILTED_LEFT' | 'HEAD_TILTED_RIGHT' |
-    'TOO_FAR' | 'TOO_CLOSE' | 'LOW_LIGHT' | 'FACE_NOT_DETECTED';
-    message: string;
-    direction?: 'up' | 'down' | 'left' | 'right' | 'forward' | 'backward';
-}
-
-export interface CalibrationValidation {
-    valid: boolean;
-    issues: CalibrationIssue[];
-    guidance: string | null;  // Real-time guidance message
-}
-
 export interface PreSuspicionSignals {
     pitchDelta: number;
     yawDelta: number;
@@ -64,37 +39,6 @@ export interface PreSuspicionResult {
 
 // ========== Constants ==========
 
-/**
- * Calibration thresholds - aligned with faceAnalysis.ts LOOK_AWAY_THRESHOLDS
- * These define acceptable ranges during calibration
- */
-const CALIBRATION_THRESHOLDS = {
-    MIN_PITCH: -15,        // Aligned: head not looking up too much (was -10)
-    MAX_PITCH: 20,         // Aligned: head not looking down too much (was 15)
-    MAX_YAW: 20,           // Aligned: not turned more than 20° (was 15)
-    MIN_FACE_AREA: 8000,   // Not too far away (pixels²)
-    MAX_FACE_AREA: 80000,  // Not too close
-    MIN_BRIGHTNESS: 50,    // 0-255 scale
-    CALIBRATION_DURATION: 30000,  // 30s
-    MIN_SAMPLES: 60        // At least 60 samples (2fps x 30s)
-};
-
-/**
- * Phone-prep detection thresholds for suspicious behavior patterns
- * 
- * MULTI-CONDITION APPROACH: Require combination of signals to reduce false positives
- * 
- * Attack Scenarios to Catch:
- * 1. Phone camera snap: Look down 30° for 1-2s → snap → look back
- * 2. Document glance: Quick 2s look at notes beside keyboard
- * 3. Phone prep: Reach for phone in lap (head tilt + gaze down + lean forward)
- * 
- * Philosophy:
- * - Multi-condition checks reduce false positives
- * - 1.8s sustained duration filters thinking pauses
- * - Distance change detects leaning toward phone/notes
- * - Higher confidence threshold requires multiple signals
- */
 const PHONE_PREP_THRESHOLDS = {
     // Primary thresholds - RAISED to reduce false positives
     PITCH_DOWN_DELTA: 25,     // 25° down from baseline (lowered from 35 - >40° absolute)
@@ -117,7 +61,7 @@ const PHONE_PREP_THRESHOLDS = {
     CONFIDENCE_THRESHOLD: 35,  // 35/100 - requires pitch+stable+one more condition
 
     // ========================================
-    // ESCALATION LOGIC (NEW)
+    // ESCALATION LOGIC
     // ========================================
     ESCALATION: {
         // Pre-suspicion → Violation escalation
@@ -138,236 +82,9 @@ const PHONE_PREP_THRESHOLDS = {
     }
 };
 
-// ========== Calibration Collector ==========
-
-export class CalibrationCollector {
-    private samples: Array<{
-        pitch: number;
-        yaw: number;
-        gaze: { horizontal: number; vertical: number };
-        faceBox: { x: number; y: number; area: number };
-        brightness: number;
-        timestamp: number;
-    }> = [];
-
-    private blinkTimestamps: number[] = [];
-    private startTime: number = 0;
-    private isCollecting: boolean = false;
-
-    start(): void {
-        this.samples = [];
-        this.blinkTimestamps = [];
-        this.startTime = Date.now();
-        this.isCollecting = true;
-    }
-
-    stop(): void {
-        this.isCollecting = false;
-    }
-
-    addSample(
-        headPose: HeadPose,
-        irisGaze: IrisGaze | null,
-        faceBox: { x: number; y: number; width: number; height: number },
-        brightness: number,
-        isBlinking: boolean
-    ): void {
-        if (!this.isCollecting) return;
-
-        const now = Date.now();
-
-        this.samples.push({
-            pitch: headPose.pitch,
-            yaw: headPose.yaw,
-            gaze: irisGaze
-                ? { horizontal: irisGaze.horizontalGaze, vertical: irisGaze.verticalGaze }
-                : { horizontal: 0, vertical: 0 },
-            faceBox: {
-                x: faceBox.x + faceBox.width / 2,
-                y: faceBox.y + faceBox.height / 2,
-                area: faceBox.width * faceBox.height
-            },
-            brightness,
-            timestamp: now
-        });
-
-        if (isBlinking) {
-            this.blinkTimestamps.push(now);
-        }
-    }
-
-    /**
-     * Real-time validation with directional guidance
-     */
-    validateRealtime(
-        headPose: HeadPose,
-        faceBox: { x: number; y: number; width: number; height: number } | null,
-        brightness: number
-    ): CalibrationValidation {
-        const issues: CalibrationIssue[] = [];
-
-        if (!faceBox) {
-            return {
-                valid: false,
-                issues: [{
-                    type: 'FACE_NOT_DETECTED',
-                    message: 'Không phát hiện khuôn mặt'
-                }],
-                guidance: 'Đảm bảo khuôn mặt nằm trong khung hình'
-            };
-        }
-
-        const faceArea = faceBox.width * faceBox.height;
-
-        // Check pitch (up/down)
-        if (headPose.pitch < CALIBRATION_THRESHOLDS.MIN_PITCH) {
-            issues.push({
-                type: 'HEAD_TOO_LOW',
-                message: 'Đầu cúi quá thấp',
-                direction: 'up'
-            });
-        } else if (headPose.pitch > CALIBRATION_THRESHOLDS.MAX_PITCH) {
-            issues.push({
-                type: 'HEAD_TOO_HIGH',
-                message: 'Đầu ngửa quá cao',
-                direction: 'down'
-            });
-        }
-
-        // Check yaw (left/right)
-        if (headPose.yaw < -CALIBRATION_THRESHOLDS.MAX_YAW) {
-            issues.push({
-                type: 'HEAD_TILTED_LEFT',
-                message: 'Đang quay trái',
-                direction: 'right'
-            });
-        } else if (headPose.yaw > CALIBRATION_THRESHOLDS.MAX_YAW) {
-            issues.push({
-                type: 'HEAD_TILTED_RIGHT',
-                message: 'Đang quay phải',
-                direction: 'left'
-            });
-        }
-
-        // Check distance
-        if (faceArea < CALIBRATION_THRESHOLDS.MIN_FACE_AREA) {
-            issues.push({
-                type: 'TOO_FAR',
-                message: 'Ngồi quá xa',
-                direction: 'forward'
-            });
-        } else if (faceArea > CALIBRATION_THRESHOLDS.MAX_FACE_AREA) {
-            issues.push({
-                type: 'TOO_CLOSE',
-                message: 'Ngồi quá gần',
-                direction: 'backward'
-            });
-        }
-
-        // Check lighting
-        if (brightness < CALIBRATION_THRESHOLDS.MIN_BRIGHTNESS) {
-            issues.push({
-                type: 'LOW_LIGHT',
-                message: 'Ánh sáng không đủ'
-            });
-        }
-
-        // Generate guidance message (prioritize most important issue)
-        let guidance: string | null = null;
-        if (issues.length > 0) {
-            const priorityIssue = issues[0];
-            switch (priorityIssue.direction) {
-                case 'up':
-                    guidance = '⬆️ Ngẩng đầu lên';
-                    break;
-                case 'down':
-                    guidance = '⬇️ Cúi đầu xuống';
-                    break;
-                case 'left':
-                    guidance = '⬅️ Quay sang trái';
-                    break;
-                case 'right':
-                    guidance = '➡️ Quay sang phải';
-                    break;
-                case 'forward':
-                    guidance = '📷 Ngồi gần camera hơn';
-                    break;
-                case 'backward':
-                    guidance = '📷 Ngồi xa camera hơn';
-                    break;
-                default:
-                    guidance = priorityIssue.message;
-            }
-        }
-
-        return {
-            valid: issues.length === 0,
-            issues,
-            guidance
-        };
-    }
-
-    /**
-     * Calculate final baseline from collected samples
-     */
-    calculateBaseline(): BaselineData | null {
-        if (this.samples.length < CALIBRATION_THRESHOLDS.MIN_SAMPLES) {
-            console.warn(`[Calibration] Not enough samples: ${this.samples.length}/${CALIBRATION_THRESHOLDS.MIN_SAMPLES}`);
-            return null;
-        }
-
-        // Use median for robustness
-        const sortedPitch = [...this.samples].sort((a, b) => a.pitch - b.pitch);
-        const sortedYaw = [...this.samples].sort((a, b) => a.yaw - b.yaw);
-        const sortedGazeH = [...this.samples].sort((a, b) => a.gaze.horizontal - b.gaze.horizontal);
-        const sortedGazeV = [...this.samples].sort((a, b) => a.gaze.vertical - b.gaze.vertical);
-
-        const mid = Math.floor(this.samples.length / 2);
-
-        // Calculate blink rate (blinks per minute)
-        const duration = Date.now() - this.startTime;
-        const blinkRate = (this.blinkTimestamps.length / duration) * 60000;
-
-        // Face box center (median)
-        const sortedFaceX = [...this.samples].sort((a, b) => a.faceBox.x - b.faceBox.x);
-        const sortedFaceY = [...this.samples].sort((a, b) => a.faceBox.y - b.faceBox.y);
-        const sortedFaceArea = [...this.samples].sort((a, b) => a.faceBox.area - b.faceBox.area);
-
-        return {
-            avgPitch: sortedPitch[mid].pitch,
-            avgYaw: sortedYaw[mid].yaw,
-            avgGaze: {
-                horizontal: sortedGazeH[mid].gaze.horizontal,
-                vertical: sortedGazeV[mid].gaze.vertical
-            },
-            avgBlinkRate: blinkRate,
-            faceBoxCenter: {
-                x: sortedFaceX[mid].faceBox.x,
-                y: sortedFaceY[mid].faceBox.y
-            },
-            faceBoxArea: sortedFaceArea[mid].faceBox.area,
-            avgBrightness: this.samples.reduce((sum, s) => sum + s.brightness, 0) / this.samples.length,
-            collectedAt: Date.now(),
-            sampleCount: this.samples.length
-        };
-    }
-
-    getProgress(): number {
-        const elapsed = Date.now() - this.startTime;
-        return Math.min(100, (elapsed / CALIBRATION_THRESHOLDS.CALIBRATION_DURATION) * 100);
-    }
-
-    isComplete(): boolean {
-        const elapsed = Date.now() - this.startTime;
-        return elapsed >= CALIBRATION_THRESHOLDS.CALIBRATION_DURATION &&
-            this.samples.length >= CALIBRATION_THRESHOLDS.MIN_SAMPLES;
-    }
-}
-
 // ========== Pre-Suspicion Detector ==========
 
 export class PreSuspicionDetector {
-    private baseline: BaselineData | null = null;
     private history: Array<{
         signals: PreSuspicionSignals;
         timestamp: number;
@@ -387,17 +104,6 @@ export class PreSuspicionDetector {
 
     private baselineFaceArea: number | null = null;
     private normalStateFrames = 0;
-
-    setBaseline(baseline: BaselineData): void {
-        this.baseline = baseline;
-        this.history = [];
-        this.suspicionStartTime = null;
-        console.log('[PreSuspicion] Baseline set:', baseline);
-    }
-
-    getBaseline(): BaselineData | null {
-        return this.baseline;
-    }
 
     /**
      * Analyze current frame for pre-suspicion signals
@@ -420,7 +126,7 @@ export class PreSuspicionDetector {
         this.blinkTimestamps = this.blinkTimestamps.filter(t => now - t < 60000);
 
         // Calculate signals using fixed thresholds (no baseline needed)
-        const signals = this.calculateSignalsWithoutBaseline(headPose, irisGaze, faceBox, now);
+        const signals = this.calculateSignals(headPose, irisGaze, faceBox, now);
 
         // Add to history
         this.history.push({ signals, timestamp: now });
@@ -466,62 +172,6 @@ export class PreSuspicionDetector {
         return result;
     }
 
-    private calculateSignals(
-        headPose: HeadPose,
-        irisGaze: IrisGaze | null,
-        faceBox: { x: number; y: number; width: number; height: number },
-        now: number
-    ): PreSuspicionSignals {
-        const baseline = this.baseline!;
-
-        // Pitch delta (negative = looking down relative to baseline)
-        // Example: baseline=5°, current=-10° → pitchDelta=-15 (looking down more)
-        const pitchDelta = headPose.pitch - baseline.avgPitch;
-
-        // Yaw delta (absolute value for either direction)
-        const yawDelta = Math.abs(headPose.yaw - baseline.avgYaw);
-
-        // Gaze delta
-        const gazeDelta = irisGaze ? {
-            horizontal: Math.abs(irisGaze.horizontalGaze - baseline.avgGaze.horizontal),
-            vertical: irisGaze.verticalGaze - baseline.avgGaze.vertical  // Positive = looking down
-        } : { horizontal: 0, vertical: 0 };
-
-        // Blink rate delta (ratio compared to baseline)
-        const currentBlinkRate = (this.blinkTimestamps.length / 60) * 60;  // Extrapolate to per-minute
-        const blinkRateDelta = baseline.avgBlinkRate > 0
-            ? currentBlinkRate / baseline.avgBlinkRate
-            : 1;
-
-        // Face box drift
-        const currentCenter = {
-            x: faceBox.x + faceBox.width / 2,
-            y: faceBox.y + faceBox.height / 2
-        };
-        const faceBoxDrift = this.lastFaceBox
-            ? Math.sqrt(
-                Math.pow(currentCenter.x - this.lastFaceBox.x, 2) +
-                Math.pow(currentCenter.y - this.lastFaceBox.y, 2)
-            )
-            : 0;
-
-        // Face area ratio for leaning detection
-        const currentFaceArea = faceBox.width * faceBox.height;
-        const faceAreaRatio = this.lastFaceArea && this.lastFaceArea > 0
-            ? currentFaceArea / this.lastFaceArea
-            : 1.0;
-
-        return {
-            pitchDelta,
-            yawDelta,
-            gazeDelta,
-            blinkRateDelta,
-            faceBoxDrift,
-            faceBoxStable: faceBoxDrift < PHONE_PREP_THRESHOLDS.FACE_DRIFT_MAX,
-            faceAreaRatio
-        };
-    }
-
     /**
      * Calculate signals WITHOUT requiring calibration baseline.
      * Uses absolute thresholds on raw head pose values.
@@ -530,7 +180,7 @@ export class PreSuspicionDetector {
      * - pitch ~= 0-10° (slight downward to screen)
      * - yaw ~= 0° (facing camera)
      */
-    private calculateSignalsWithoutBaseline(
+    private calculateSignals(
         headPose: HeadPose,
         irisGaze: IrisGaze | null,
         faceBox: { x: number; y: number; width: number; height: number },
@@ -628,22 +278,6 @@ export class PreSuspicionDetector {
         }
 
         // ========================================
-        // Pattern 2: Phone beside (looking sideways)
-        // DISABLED - Looking sideways is handled by Look Away Detection (faceAnalysis.ts)
-        // Pre-suspicion should only detect looking DOWN (phone below pattern)
-        // ========================================
-        // const isLookingSide = Math.abs(signals.yawDelta) > PHONE_PREP_THRESHOLDS.YAW_DELTA;
-        // const isGazingSide = Math.abs(signals.gazeDelta.horizontal) > PHONE_PREP_THRESHOLDS.GAZE_H_DELTA;
-        //
-        // if (isLookingSide && isFaceStable) {
-        //     confidence += W.YAW_SIDE;
-        //     pattern = 'phone_beside';
-        // }
-        // if (isGazingSide) {
-        //     confidence += W.GAZE_SIDE;
-        // }
-
-        // ========================================
         // DETAILED LOGGING FOR TRACING
         // ========================================
 
@@ -654,7 +288,6 @@ export class PreSuspicionDetector {
             if (isGazingDown) breakdown.push(`gaze↓:${W.GAZE_DOWN}`);
             if (isBlinkSuppressed) breakdown.push(`blink:${W.BLINK_SUPPRESSED}`);
             if (isLeaningForward && pattern === 'phone_below') breakdown.push(`lean:${W.DISTANCE_CHANGE}`);
-            // YAW/horizontal gaze now handled by Look Away Detection
 
             console.log(
                 `[PreSuspicion:Signals] ` +
@@ -820,28 +453,10 @@ export class PreSuspicionDetector {
         return false;
     }
 
-    private getEmptySignals(): PreSuspicionSignals {
-        return {
-            pitchDelta: 0,
-            yawDelta: 0,
-            gazeDelta: { horizontal: 0, vertical: 0 },
-            blinkRateDelta: 1,
-            faceBoxDrift: 0,
-            faceBoxStable: true,
-            faceAreaRatio: 1.0
-        };
-    }
-
     reset(): void {
         this.history = [];
         this.suspicionStartTime = null;
-        this.blinkTimestamps = [];
-        this.lastFaceBox = null;
         this.preSuspicionHistory = [];
+        this.lastNormalStateStart = null;
     }
 }
-
-// ========== Singleton Instance ==========
-
-export const calibrationCollector = new CalibrationCollector();
-export const preSuspicionDetector = new PreSuspicionDetector();

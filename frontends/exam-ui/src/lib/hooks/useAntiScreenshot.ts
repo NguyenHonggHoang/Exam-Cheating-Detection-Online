@@ -1,14 +1,3 @@
-/**
- * Anti-Screenshot Hook
- * 
- * Prevents or hinders screenshot/screen recording attempts.
- * - Disables right-click context menu
- * - Blocks PrintScreen key
- * - Disables common keyboard shortcuts
- * - Blurs content momentarily on screenshot attempt
- * - Detects rapid blur/focus cycles (heuristic for external screenshot tools)
- */
-
 import { useEffect, useCallback, useRef } from 'react';
 
 interface UseAntiScreenshotOptions {
@@ -24,38 +13,59 @@ export function useAntiScreenshot(options: UseAntiScreenshotOptions = {}) {
         onScreenshotAttempt
     } = options;
 
-    // Blur the content temporarily
-    const blurContent = useCallback(() => {
-        const overlay = document.createElement('div');
-        overlay.id = 'screenshot-blur-overlay';
-        overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(255, 255, 255, 0.95);
-      backdrop-filter: blur(20px);
-      z-index: 999999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-      font-weight: bold;
-      color: #333;
-    `;
-        overlay.innerHTML = '⚠️ Screenshot không được phép!';
-        document.body.appendChild(overlay);
+    const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-        setTimeout(() => {
-            overlay.remove();
+    const blurContent = useCallback((message: string = '⚠️ Screenshot không được phép!', notifyParent: boolean = true) => {
+        // Check if overlay already exists
+        let overlay = document.getElementById('screenshot-blur-overlay');
+
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'screenshot-blur-overlay';
+            overlay.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(255, 255, 255, 0.95);
+          backdrop-filter: blur(20px);
+          z-index: 999999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 24px;
+          font-weight: bold;
+          color: #333;
+          pointer-events: none; /* Ensure clicks pass through if needed, though usually we want to block */
+        `;
+            document.body.appendChild(overlay);
+        }
+
+        overlay.innerHTML = message;
+
+        if (blurTimeoutRef.current) {
+            clearTimeout(blurTimeoutRef.current);
+            blurTimeoutRef.current = null;
+        }
+
+        blurTimeoutRef.current = setTimeout(() => {
+            const currentOverlay = document.getElementById('screenshot-blur-overlay');
+            if (currentOverlay) {
+                currentOverlay.remove();
+            }
+            blurTimeoutRef.current = null;
         }, blurDurationMs);
 
-        onScreenshotAttempt?.();
+        if (notifyParent) {
+            onScreenshotAttempt?.();
+        }
     }, [blurDurationMs, onScreenshotAttempt]);
 
-    // Heuristic Detection State
     const lastBlurTimeRef = useRef<number>(0);
+
+    // Flag to track if a screenshot action (key press) just happened
+    const isScreenshotActionRef = useRef<boolean>(false);
 
     // Heuristic: Rapid Blur/Focus cycle (< 2s) usually implies Snipping Tool usage
     useEffect(() => {
@@ -69,16 +79,19 @@ export function useAntiScreenshot(options: UseAntiScreenshotOptions = {}) {
             const now = Date.now();
             const timeSinceBlur = now - lastBlurTimeRef.current;
 
+            // If a screenshot action was detected recently (last 3s), skip this heuristic warning
+            // because the explicit screenshot warning is more accurate/important.
+            if (isScreenshotActionRef.current) {
+                console.log('[Security] Skipping rapid blur check due to recent screenshot action');
+                return;
+            }
+
             // If focus returns within 100ms - 2000ms, it's suspicious
             // (Too fast for a normal "check another tab" action, matches "Snippet Tool" behavior)
             if (timeSinceBlur > 100 && timeSinceBlur < 2000) {
                 console.warn('[Security] Rapid blur/focus cycle detected - Potential Screenshot Tool');
-                // Updated warning message as requested
-                const overlay = document.getElementById('screenshot-blur-overlay');
-                if (overlay) {
-                    overlay.innerHTML = '⚠️ Phát hiện chuyển đổi cửa sổ nhanh (Nghi vấn chụp màn hình)!';
-                }
-                blurContent();
+                // notifyParent = false to avoid triggering critical violation loop
+                blurContent('⚠️ Phát hiện chuyển đổi cửa sổ nhanh (Nghi vấn chụp màn hình)!', false);
             }
         };
 
@@ -91,79 +104,96 @@ export function useAntiScreenshot(options: UseAntiScreenshotOptions = {}) {
         };
     }, [enabled, blurContent]);
 
-    // Static Preventions (Keyboard/Mouse)
     useEffect(() => {
         if (!enabled) return;
 
-        // Disable right-click context menu
         const handleContextMenu = (e: MouseEvent) => {
             e.preventDefault();
             return false;
         };
 
-        // Disable various keyboard shortcuts
+        const markScreenshotAction = () => {
+            isScreenshotActionRef.current = true;
+            // Reset flag after 3s (enough time for focus cycle to complete)
+            setTimeout(() => {
+                isScreenshotActionRef.current = false;
+            }, 3000);
+        };
+
         const handleKeyDown = (e: KeyboardEvent) => {
-            // PrintScreen
-            if (e.key === 'PrintScreen') {
+            // PrintScreen (key or keyCode 44)
+            if (e.key === 'PrintScreen' || e.keyCode === 44) {
                 e.preventDefault();
-                blurContent();
+                markScreenshotAction();
+                blurContent(); // strict violation = true
                 return false;
             }
 
             // Ctrl+P (Print)
-            if (e.ctrlKey && e.key === 'p') {
+            if (e.ctrlKey && (e.key === 'p' || e.key === 'P' || e.keyCode === 80)) {
                 e.preventDefault();
                 return false;
             }
 
             // Ctrl+S (Save)
-            if (e.ctrlKey && e.key === 's') {
+            if (e.ctrlKey && (e.key === 's' || e.key === 'S' || e.keyCode === 83)) {
                 e.preventDefault();
                 return false;
             }
 
             // Ctrl+Shift+S (Save As)
-            if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+            if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's' || e.keyCode === 83)) {
                 e.preventDefault();
                 return false;
             }
 
             // Ctrl+Shift+I (Dev Tools)
-            if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')) {
+            if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.keyCode === 73)) {
                 e.preventDefault();
                 return false;
             }
 
             // F12 (Dev Tools)
-            if (e.key === 'F12') {
+            if (e.key === 'F12' || e.keyCode === 123) {
                 e.preventDefault();
                 return false;
             }
 
-            // Win+Shift+S (Windows Screenshot)
-            if (e.metaKey && e.shiftKey && (e.key === 's' || e.key === 'S')) {
+            // Win+Shift+S (Windows Screenshot) - Hard to catch as OS intercepts 'Win' key combinations
+            // But we can try catching the specific sequence if browser sees it
+            if (e.metaKey && e.shiftKey && (e.key === 's' || e.key === 'S' || e.keyCode === 83)) {
                 e.preventDefault();
+                markScreenshotAction();
                 blurContent();
                 return false;
             }
         };
 
-        // Disable drag and drop
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.key === 'PrintScreen' || e.keyCode === 44) {
+                e.preventDefault();
+                markScreenshotAction();
+                blurContent();
+                return false;
+            }
+        };
+
         const handleDragStart = (e: DragEvent) => {
             e.preventDefault();
             return false;
         };
-
-        // Disable text selection on question content
         const handleSelectStart = (e: Event) => {
-            const target = e.target as HTMLElement;
-            if (target.closest('.question-content')) {
+            let target = e.target as Node;
+            if (target.nodeType === Node.TEXT_NODE && target.parentElement) {
+                target = target.parentElement;
+            }
+
+            if (target instanceof Element && target.closest('.question-content')) {
                 e.preventDefault();
                 return false;
             }
         };
 
-        // Add CSS to disable selection on question content
         const style = document.createElement('style');
         style.id = 'anti-screenshot-style';
         style.textContent = `
@@ -197,16 +227,16 @@ export function useAntiScreenshot(options: UseAntiScreenshotOptions = {}) {
     `;
         document.head.appendChild(style);
 
-        // Add event listeners
         document.addEventListener('contextmenu', handleContextMenu, true); // capture: true
         document.addEventListener('keydown', handleKeyDown, true); // capture: true
+        document.addEventListener('keyup', handleKeyUp, true); // capture: true
         document.addEventListener('dragstart', handleDragStart);
         document.addEventListener('selectstart', handleSelectStart);
 
-        // Cleanup
         return () => {
             document.removeEventListener('contextmenu', handleContextMenu, true);
             document.removeEventListener('keydown', handleKeyDown, true);
+            document.removeEventListener('keyup', handleKeyUp, true);
             document.removeEventListener('dragstart', handleDragStart);
             document.removeEventListener('selectstart', handleSelectStart);
             style.remove();

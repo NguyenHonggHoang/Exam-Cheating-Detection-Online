@@ -1,0 +1,430 @@
+# ==========================================
+# 1. Cilium Network Policy for user-service
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: user-service-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: user-service
+  ingress:
+  # Allow admin-service to call user-service HTTP (8100) and gRPC (9090)
+  - fromEndpoints:
+    - matchLabels:
+        app: admin-service
+    toPorts:
+    - ports:
+      - port: "8100"
+        protocol: TCP
+      - port: "9090"
+        protocol: TCP
+  # Allow authorization-server to reach user-service
+  - fromEndpoints:
+    - matchLabels:
+        app: authorization-server
+    toPorts:
+    - ports:
+      - port: "8100"
+        protocol: TCP
+  # Allow bff-gateway to call user-service HTTP (8100)
+  - fromEndpoints:
+    - matchLabels:
+        app: bff-gateway
+    toPorts:
+    - ports:
+      - port: "8100"
+        protocol: TCP
+---
+# ==========================================
+# 2. Cilium Network Policy for incident-service
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: incident-service-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: incident-service
+  ingress:
+  # Allow session-service to call incident-service gRPC (9091)
+  - fromEndpoints:
+    - matchLabels:
+        app: session-service
+    toPorts:
+    - ports:
+      - port: "9091"
+        protocol: TCP
+  # Allow bff-gateway to call incident-service HTTP (8082)
+  - fromEndpoints:
+    - matchLabels:
+        app: bff-gateway
+    toPorts:
+    - ports:
+      - port: "8082"
+        protocol: TCP
+  # Allow ai-worker to call incident-service HTTP (8082) & gRPC (9091)
+  - fromEndpoints:
+    - matchLabels:
+        app: ai-worker
+    toPorts:
+    - ports:
+      - port: "8082"
+        protocol: TCP
+      - port: "9091"
+        protocol: TCP
+---
+# ==========================================
+# 2.1. Cilium Network Policy for authorization-server
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: authorization-server-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: authorization-server
+  ingress:
+  # Allow core services and gateway to authenticate (9000)
+  - fromEndpoints:
+    - matchLabels:
+        app: bff-gateway
+    - matchLabels:
+        app: session-service
+    - matchLabels:
+        app: incident-service
+    - matchLabels:
+        app: user-service
+    - matchLabels:
+        app: admin-service
+    toPorts:
+    - ports:
+      - port: "9000"
+        protocol: TCP
+---
+# ==========================================
+# 2.2. Cilium Network Policy for session-service
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: session-service-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: session-service
+  ingress:
+  # Allow bff-gateway to call session-service HTTP (8081)
+  - fromEndpoints:
+    - matchLabels:
+        app: bff-gateway
+    toPorts:
+    - ports:
+      - port: "8081"
+        protocol: TCP
+---
+# ==========================================
+# 2.3. Cilium Network Policy for admin-service
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: admin-service-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: admin-service
+  ingress:
+  # Allow bff-gateway to call admin-service HTTP (8200)
+  - fromEndpoints:
+    - matchLabels:
+        app: bff-gateway
+    toPorts:
+    - ports:
+      - port: "8200"
+        protocol: TCP
+---
+# ==========================================
+# 2.4. Cilium Network Policy for bff-gateway
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: bff-gateway-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: bff-gateway
+  ingress:
+  # Allow ingress from Istio Ingress Gateway pods (typically in istio-system namespace)
+  - fromEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": istio-system
+        app: istio-ingressgateway
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+  # Allow internal testing access from local exam namespace
+  - fromEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": exam-platform
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+---
+# ==========================================
+# 3. Cilium Network Policy for postgres database
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: postgres-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+  # Allow all application pods in the namespace to connect to DB (5432)
+  - fromEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": exam-platform
+    toPorts:
+    - ports:
+      - port: "5432"
+        protocol: TCP
+---
+# ==========================================
+# 4. Cilium Network Policy for RabbitMQ
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: rabbitmq-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: rabbitmq
+  ingress:
+  # Allow session-service, incident-service, and ai-worker to connect to RabbitMQ (5672)
+  - fromEndpoints:
+    - matchLabels:
+        app: session-service
+    - matchLabels:
+        app: incident-service
+    - matchLabels:
+        app: ai-worker
+    toPorts:
+    - ports:
+      - port: "5672"
+        protocol: TCP
+---
+# ==========================================
+# 5. Cilium Network Policy for PgBouncer Pools
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: pgbouncer-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - incident-pgbouncer-primary
+          - incident-pgbouncer-replica
+          - session-pgbouncer-primary
+          - session-pgbouncer-replica
+  ingress:
+  # Allow all application pods in the namespace to connect to PgBouncer pools (6432)
+  - fromEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": exam-platform
+    toPorts:
+    - ports:
+      - port: "6432"
+        protocol: TCP
+---
+# ==========================================
+# 6. Cilium Network Policy for Dedicated Databases
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: dedicated-db-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - incident-db-primary
+          - incident-db-replica
+          - session-db-primary
+          - session-db-replica
+  ingress:
+  # Allow respective PgBouncers to connect to DB backend (5432)
+  - fromEndpoints:
+    - matchExpressions:
+        - key: app
+          operator: In
+          values:
+            - incident-pgbouncer-primary
+            - incident-pgbouncer-replica
+            - session-pgbouncer-primary
+            - session-pgbouncer-replica
+    toPorts:
+    - ports:
+      - port: "5432"
+        protocol: TCP
+  # Allow database clusters to communicate with each other for streaming replication
+  - fromEndpoints:
+    - matchExpressions:
+        - key: app
+          operator: In
+          values:
+            - incident-db-primary
+            - incident-db-replica
+            - session-db-primary
+            - session-db-replica
+    toPorts:
+    - ports:
+      - port: "5432"
+        protocol: TCP
+---
+# ==========================================
+# 7. Cilium Network Policy for Redis
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: redis-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: redis
+  ingress:
+  # Allow session-service to connect to Redis (6379)
+  - fromEndpoints:
+    - matchLabels:
+        app: session-service
+    toPorts:
+    - ports:
+      - port: "6379"
+        protocol: TCP
+---
+# ==========================================
+# 8. Cilium Network Policy for Zookeeper
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: zookeeper-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: zookeeper
+  ingress:
+  # Allow Kafka to connect to Zookeeper (2181)
+  - fromEndpoints:
+    - matchLabels:
+        app: kafka
+    toPorts:
+    - ports:
+      - port: "2181"
+        protocol: TCP
+---
+# ==========================================
+# 9. Cilium Network Policy for Kafka
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: kafka-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: kafka
+  ingress:
+  # Allow incident-service, debezium, and namespace internal pods to connect to Kafka (9092, 29092)
+  - fromEndpoints:
+    - matchLabels:
+        app: incident-service
+    - matchLabels:
+        app: debezium
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": exam-platform
+    toPorts:
+    - ports:
+      - port: "9092"
+        protocol: TCP
+      - port: "29092"
+        protocol: TCP
+---
+# ==========================================
+# 10. Cilium Network Policy for Debezium
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: debezium-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: debezium
+  ingress:
+  # Allow other internal controllers or admin services to configure Debezium connectors (8083)
+  - fromEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": exam-platform
+    toPorts:
+    - ports:
+      - port: "8083"
+        protocol: TCP
+---
+# ==========================================
+# 11. Cilium Network Policy for MinIO
+# ==========================================
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: minio-policy
+  namespace: exam-platform
+spec:
+  endpointSelector:
+    matchLabels:
+      app: minio
+  ingress:
+  # Allow session-service, incident-service, and internal namespace pods to access MinIO (9000, 9001)
+  - fromEndpoints:
+    - matchLabels:
+        app: session-service
+    - matchLabels:
+        app: incident-service
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": exam-platform
+    toPorts:
+    - ports:
+      - port: "9000"
+        protocol: TCP
+      - port: "9001"
+        protocol: TCP

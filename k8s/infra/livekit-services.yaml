@@ -1,0 +1,163 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: livekit-config
+  namespace: exam-platform
+data:
+  livekit.yaml: |
+    port: 7880
+    rtc:
+      port_range_start: 50000
+      port_range_end: 50020
+      use_external_ip: false
+      stun_servers:
+        - stun.l.google.com:19302
+        - stun1.l.google.com:19302
+      enable_loopback_candidate: true
+    redis:
+      address: redis:6379
+    keys:
+      devkey: secret
+    logging:
+      level: info
+      pion_level: warn
+    room:
+      auto_create: true
+      empty_timeout: 300
+      max_participants: 50
+    turn:
+      enabled: false
+    webhook:
+      urls:
+        - http://session-service:8081/api/egress/webhook
+      api_key: devkey
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: livekit
+  namespace: exam-platform
+spec:
+  ports:
+    - name: http
+      port: 7880
+      targetPort: 7880
+  selector:
+    app: livekit
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: livekit
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: livekit
+  template:
+    metadata:
+      labels:
+        app: livekit
+      annotations:
+        sidecar.istio.io/inject: "false" # Bypass Istio Envoy Proxy for WebRTC UDP performance
+    spec:
+      enableServiceLinks: false # Avoid auto-injected service env vars (like LIVEKIT_PORT) conflict
+      hostNetwork: true # Bind directly to host network for local WebRTC UDP communication
+      dnsPolicy: ClusterFirstWithHostNet # CRITICAL: Allows hostNetwork pod to resolve K8s internal DNS (like redis)
+      containers:
+        - name: livekit
+          image: livekit/livekit-server:latest
+          args: ["--config", "/etc/livekit/livekit.yaml"]
+          ports:
+            - containerPort: 7880
+              name: http
+            - containerPort: 50000
+              protocol: UDP
+              name: rtc-50000
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/livekit
+      volumes:
+        - name: config-volume
+          configMap:
+            name: livekit-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: livekit-egress-config
+  namespace: exam-platform
+data:
+  egress.yaml: |
+    api_key: devkey
+    api_secret: secret
+    ws_url: ws://livekit:7880
+    health_port: 7881
+    log_level: debug
+    redis:
+      address: redis:6379
+    s3:
+      access_key: minioadmin
+      secret: minioadmin123
+      endpoint: http://minio:9000
+      bucket: exam-evidence
+      region: us-east-1
+      force_path_style: true
+    room_composite:
+      video_bitrate: 3000000
+      video_framerate: 30
+      video_width: 1280
+      video_height: 720
+      video_codec: h264
+      audio_bitrate: 128000
+      audio_frequency: 48000
+      file_type: mp4
+    track_composite:
+      video_bitrate: 1500000
+      video_framerate: 24
+      video_width: 1280
+      video_height: 720
+      video_codec: h264
+      video_profile: main
+      audio_bitrate: 96000
+      audio_frequency: 44100
+      file_type: mp4
+    cpu_cost:
+      room_composite: 3.0
+      track_composite: 2.0
+      track: 1.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: livekit-egress
+  namespace: exam-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: livekit-egress
+  template:
+    metadata:
+      labels:
+        app: livekit-egress
+      annotations:
+        sidecar.istio.io/inject: "false" # Egress connects directly to internal services
+    spec:
+      enableServiceLinks: false # Avoid conflicts
+      containers:
+        - name: egress
+          image: livekit/egress:latest
+          env:
+            - name: EGRESS_CONFIG_FILE
+              value: /etc/egress/egress.yaml
+          securityContext:
+            privileged: true # Required for Chrome headless sandbox inside Docker container
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/egress
+      volumes:
+        - name: config-volume
+          configMap:
+            name: livekit-egress-config

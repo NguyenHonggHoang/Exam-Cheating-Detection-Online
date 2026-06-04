@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { uploadIdPhoto, getIdPhotoStatus, type StudentIdPhotoStatus } from '../api/identity';
+import { uploadIdPhoto, getIdPhotoStatus } from '../api/identity';
+import type { StudentIdPhotoStatus } from '../api/types';
 
 interface IdPhotoUploadProps {
   onUploadSuccess?: (photoId: string) => void;
@@ -85,8 +86,8 @@ export function IdPhotoUpload({ onUploadSuccess, onUploadError }: IdPhotoUploadP
 
   const getStatusBadge = () => {
     if (!status) return null;
-    
-    const badges = {
+
+    const badges: Record<string, { color: string; text: string }> = {
       'NOT_UPLOADED': { color: 'bg-gray-500', text: 'Not Uploaded' },
       'PENDING': { color: 'bg-yellow-500', text: 'Pending Verification' },
       'VERIFIED': { color: 'bg-green-500', text: 'Verified' },
@@ -94,7 +95,7 @@ export function IdPhotoUpload({ onUploadSuccess, onUploadError }: IdPhotoUploadP
     };
 
     const badge = badges[status.status] || badges['NOT_UPLOADED'];
-    
+
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white ${badge.color}`}>
         {badge.text}
@@ -173,7 +174,7 @@ export function IdPhotoUpload({ onUploadSuccess, onUploadError }: IdPhotoUploadP
             </button>
           </div>
         )}
-        
+
         <input
           ref={fileInputRef}
           type="file"

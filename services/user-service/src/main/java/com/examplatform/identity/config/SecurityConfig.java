@@ -1,5 +1,6 @@
 package com.examplatform.identity.config;
 
+import com.examplatform.identity.security.CustomJwtAuthenticationConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -16,12 +17,16 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 @Configuration
+@org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 public class SecurityConfig {
 
     private static final String[] PUBLIC_ENDPOINTS = {
             "/actuator/health",
             "/actuator/info",
-            "/api/register"
+            "/api/register",
+            "/swagger-ui/**",
+            "/v3/api-docs/**",
+            "/swagger-ui.html"
     };
 
     @Bean
@@ -37,18 +42,9 @@ public class SecurityConfig {
         return http.build();
     }
 
-    private org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter() {
-        org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter converter = new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
-            List<String> authorities = jwt.getClaimAsStringList("authorities");
-            if (authorities == null) return List.of();
-            return authorities.stream()
-                    .filter(r -> r != null && !r.isBlank())
-                    .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
-                    .map(org.springframework.security.core.authority.SimpleGrantedAuthority::new)
-                    .collect(java.util.stream.Collectors.toList());
-        });
-        return converter;
+    @Bean
+    public CustomJwtAuthenticationConverter jwtAuthenticationConverter() {
+        return new CustomJwtAuthenticationConverter();
     }
 
     @Bean
@@ -69,4 +65,3 @@ public class SecurityConfig {
         return PasswordEncoderFactories.createDelegatingPasswordEncoder();
     }
 }
-

@@ -16,27 +16,35 @@ interface BehaviorAnomaly {
     evidence?: any;
 }
 
-interface BehaviorStatistics {
-    averageTimePerQuestion: number;
-    averageRevisions: number;
-    rapidAnswers: number;
-    slowAnswers: number;
-}
-
-interface BehaviorPatterns {
-    preSuspicionCount: number;
-    timeClusterAnomalies: number;
-}
+// Backend DTO matches:
+// int overallScore,
+// List<BehaviorAnomaly> anomalies,
+// AnswerStatistics statistics,
+// List<BehaviorPattern> patterns
 
 interface BehaviorAnalysis {
-    id: string;
-    sessionId: string;
-    examId: string;
     overallScore: number;
-    anomaliesJson: string;
-    statisticsJson: string;
-    patternsJson: string;
-    analyzedAt: string;
+    anomalies: BehaviorAnomaly[];
+    statistics: BehaviorStatistics;
+    patterns: BehaviorPattern[];
+}
+
+// Stats interface matching Backend AnswerStatistics
+interface BehaviorStatistics {
+    totalQuestions: number;
+    answered: number;
+    correct: number;
+    accuracy: number;
+    avgTimePerDifficulty?: Record<string, number>;
+    avgRevisionsPerDifficulty?: Record<string, number>;
+}
+
+// Pattern matching Backend BehaviorPattern
+interface BehaviorPattern {
+    name: string;
+    detected: boolean;
+    confidence: number;
+    description: string;
 }
 
 interface AnswerBehaviorDashboardProps {
@@ -94,13 +102,13 @@ export function AnswerBehaviorDashboard({ sessionId }: AnswerBehaviorDashboardPr
         try {
             setLoading(true);
             setError(null);
-            // Endpoint: /api/proxy/api/behavior/session/{sessionId}
-            // The BFF proxy routes /api/proxy/api/behavior/* to incident-service
-            const response = await axios.get(`${API_BASE_URL}/api/behavior/session/${sessionId}`);
+            // Endpoint: /api/proxy/api/mock-exam/{sessionId}/behavior-analysis
+            // The BFF proxy routes this to session-service MockExamController
+            const response = await axios.get(`${API_BASE_URL}/api/mock-exam/${sessionId}/behavior-analysis`);
             setAnalysis(response.data);
         } catch (err) {
             const axiosError = err as AxiosError;
-            
+
             if (axiosError.response?.status === 404) {
                 setError('Chưa có phân tích hành vi cho session này.');
             } else if (axiosError.response?.status === 400) {
@@ -155,9 +163,9 @@ export function AnswerBehaviorDashboard({ sessionId }: AnswerBehaviorDashboardPr
                         <AlertDescription className="flex items-center justify-between">
                             <span>{error || 'Không có dữ liệu phân tích'}</span>
                             {error && !error.includes('Session ID') && (
-                                <Button 
-                                    variant="outline" 
-                                    size="sm" 
+                                <Button
+                                    variant="outline"
+                                    size="sm"
                                     onClick={handleRetry}
                                     className="ml-4"
                                 >
@@ -172,10 +180,17 @@ export function AnswerBehaviorDashboard({ sessionId }: AnswerBehaviorDashboardPr
         );
     }
 
-    // Parse JSON fields
-    const anomalies: BehaviorAnomaly[] = analysis.anomaliesJson ? JSON.parse(analysis.anomaliesJson) : [];
-    const statistics: BehaviorStatistics = analysis.statisticsJson ? JSON.parse(analysis.statisticsJson) : null;
-    const patterns: BehaviorPatterns = analysis.patternsJson ? JSON.parse(analysis.patternsJson) : null;
+    // Direct access to fields (Backend returns objects/arrays, not JSON strings)
+    const anomalies: BehaviorAnomaly[] = analysis.anomalies || [];
+    const statistics: BehaviorStatistics | undefined = analysis.statistics;
+    const patterns: BehaviorPattern[] = analysis.patterns || [];
+
+    // Helper to count pre-suspicion correlation
+    const preSuspicionCount = patterns.find(p => p.name === 'suspicion_correct_correlation')?.detected ? 1 : 0; // Simplified
+
+    // Parse "suspicion_correct_correlation" description for count if possible, or use anomalies count
+    // Wait, patterns logic in backend is different. "suspicion_correct_correlation" is a boolean pattern.
+    // We'll rely on what's available.
 
     const getSeverityBadge = (severity: string) => {
         const colors = {
@@ -262,11 +277,22 @@ export function AnswerBehaviorDashboard({ sessionId }: AnswerBehaviorDashboardPr
                             <div className="border rounded-lg p-3">
                                 <div className="flex items-center gap-2 mb-1">
                                     <Clock className="w-4 h-4 text-gray-500" />
-                                    <span className="text-sm font-medium">Avg Time/Question</span>
+                                    <span className="text-sm font-medium">Avg Time (All)</span>
                                 </div>
                                 <p className="text-2xl font-bold">
-                                    {(statistics.averageTimePerQuestion / 1000).toFixed(1)}s
+                                    {/* Backend doesn't give overall avg directly, infer from map or handle missing */}
+                                    {statistics.totalQuestions > 0 ? (
+                                        "Click to detail"
+                                    ) : "N/A"}
                                 </p>
+                                <div className="mt-2 text-xs text-gray-500 space-y-1">
+                                    {statistics.avgTimePerDifficulty && Object.entries(statistics.avgTimePerDifficulty).map(([diff, time]) => (
+                                        <div key={diff} className="flex justify-between">
+                                            <span className="capitalize">{diff}:</span>
+                                            <span>{(time / 1000).toFixed(1)}s</span>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
 
                             <div className="border rounded-lg p-3">
@@ -274,29 +300,25 @@ export function AnswerBehaviorDashboard({ sessionId }: AnswerBehaviorDashboardPr
                                     <RefreshCw className="w-4 h-4 text-gray-500" />
                                     <span className="text-sm font-medium">Avg Revisions</span>
                                 </div>
-                                <p className="text-2xl font-bold">
-                                    {statistics.averageRevisions.toFixed(1)}
-                                </p>
+                                <div className="mt-2 text-xs text-gray-500 space-y-1">
+                                    {statistics.avgRevisionsPerDifficulty && Object.entries(statistics.avgRevisionsPerDifficulty).map(([diff, count]) => (
+                                        <div key={diff} className="flex justify-between">
+                                            <span className="capitalize">{diff}:</span>
+                                            <span>{count.toFixed(1)}</span>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
 
                             <div className="border rounded-lg p-3">
                                 <div className="flex items-center gap-2 mb-1">
-                                    <AlertTriangle className="w-4 h-4 text-orange-500" />
-                                    <span className="text-sm font-medium">Rapid Answers</span>
+                                    <CheckCircle className="w-4 h-4 text-green-500" />
+                                    <span className="text-sm font-medium">Accuracy</span>
                                 </div>
-                                <p className="text-2xl font-bold text-orange-600">
-                                    {statistics.rapidAnswers}
+                                <p className="text-2xl font-bold text-green-600">
+                                    {(statistics.accuracy * 100).toFixed(0)}%
                                 </p>
-                            </div>
-
-                            <div className="border rounded-lg p-3">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <Clock className="w-4 h-4 text-blue-500" />
-                                    <span className="text-sm font-medium">Slow Answers</span>
-                                </div>
-                                <p className="text-2xl font-bold text-blue-600">
-                                    {statistics.slowAnswers}
-                                </p>
+                                <p className="text-xs text-gray-500">{statistics.correct}/{statistics.totalQuestions} correct</p>
                             </div>
                         </div>
                     </CardContent>
@@ -304,25 +326,24 @@ export function AnswerBehaviorDashboard({ sessionId }: AnswerBehaviorDashboardPr
             )}
 
             {/* Patterns */}
-            {patterns && (
+            {patterns && patterns.length > 0 && (
                 <Card>
                     <CardHeader>
                         <CardTitle>Behavioral Patterns</CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                                <span>Answered During Pre-Suspicion</span>
-                                <Badge variant={patterns.preSuspicionCount > 0 ? 'destructive' : 'secondary'}>
-                                    {patterns.preSuspicionCount} questions
-                                </Badge>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span>Time Cluster Anomalies</span>
-                                <Badge variant="secondary">
-                                    {patterns.timeClusterAnomalies}
-                                </Badge>
-                            </div>
+                        <div className="space-y-3">
+                            {patterns.map((pattern, idx) => (
+                                <div key={idx} className="flex justify-between items-center border-b pb-2 last:border-0 last:pb-0">
+                                    <span className="font-medium">{pattern.name.replace(/_/g, ' ')}</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm text-gray-600">{pattern.description}</span>
+                                        <Badge variant={pattern.detected ? 'destructive' : 'secondary'}>
+                                            {pattern.detected ? 'DETECTED' : 'Not Detected'}
+                                        </Badge>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </CardContent>
                 </Card>

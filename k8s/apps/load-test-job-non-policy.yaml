@@ -1,0 +1,392 @@
+# =============================================================================
+#  K8s Job: Non-Policy Full Stack Load Test
+#  Flow: Load Test Pod → BFF (Next.js) → Backend Services
+#
+#  Measures end-to-end latency as experienced by real users, including:
+#    - BFF JWT validation overhead
+#    - BFF proxy routing latency
+#    - Backend service processing time
+#
+#  Usage:
+#    kubectl apply -f k8s/apps/load-test-job-non-policy.yaml
+#    kubectl logs -f job/load-test-non-policy -n exam-platform
+# =============================================================================
+
+# ---------------------------------------------------------------------------- #
+#  ConfigMap — embeds the full-stack Python load test script
+# ---------------------------------------------------------------------------- #
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: load-test-script-config
+  namespace: exam-platform
+data:
+  load_test_all_apis.py: |
+    import asyncio, aiohttp, time, argparse, random, uuid, os
+    from dataclasses import dataclass, field
+    from typing import Optional, Tuple
+
+    DEFAULT_EXAM_ID    = "e1000000-0000-0000-0000-000000000001"
+    VIOLATION_TYPES    = ["TAB_SWITCH", "LOOKING_AWAY", "MULTIPLE_FACES", "NO_FACE", "PASTE", "BLUR"]
+    VIOLATION_STATES   = ["WARN", "SUSPICIOUS", "CRITICAL"]
+    BFF_CLIENT_ID      = "exam-bff-client"
+    BFF_CLIENT_SECRET  = "exam-bff-secret"
+    TEST_PASSWORD      = "LoadTest@123!"
+
+    @dataclass
+    class EndpointStat:
+        success: int = 0; failed: int = 0
+        latencies: list = field(default_factory=list)
+        errors: dict = field(default_factory=dict)
+        def record(self, ms, status, ok):
+            if ok: self.success += 1; self.latencies.append(ms)
+            else:  self.failed  += 1; self.errors[str(status)] = self.errors.get(str(status), 0) + 1
+        def report(self, total_sec):
+            total = self.success + self.failed
+            if total == 0: return "  (no requests)"
+            lines = [
+                f"  Total    : {total}",
+                f"  Success  : {self.success/(total or 1)*100:.2f}%  (ok={self.success}, fail={self.failed})",
+            ]
+            if self.latencies:
+                s = sorted(self.latencies); n = len(s)
+                avg = sum(s)/n; p50 = s[int(n*0.50)]; p95 = s[min(int(n*0.95),n-1)]; p99 = s[min(int(n*0.99),n-1)]
+                lines += [f"  RPS      : {n/total_sec:.2f}", f"  Avg/p50/p95/p99: {avg:.0f}/{p50:.0f}/{p95:.0f}/{p99:.0f} ms"]
+            if self.errors:
+                for code, cnt in sorted(self.errors.items()): lines.append(f"  Error [{code}]: {cnt}")
+            return "\n".join(lines)
+
+    _stats = {}
+    def stat(name):
+        if name not in _stats: _stats[name] = EndpointStat()
+        return _stats[name]
+
+    async def req(session, method, url, stat_name, *, json_body=None, form_body=None,
+                  headers=None, success_codes=(200,201,202,204), timeout=20):
+        t0 = time.time(); status = 0; body = None
+        try:
+            kw = dict(timeout=aiohttp.ClientTimeout(total=timeout),
+                      headers=headers or {}, allow_redirects=False)
+            if json_body  is not None: kw["json"] = json_body
+            if form_body  is not None: kw["data"] = form_body
+            async with getattr(session, method.lower())(url, **kw) as r:
+                status = r.status
+                if status in success_codes:
+                    try: body = await r.json(content_type=None)
+                    except: body = {}
+        except asyncio.TimeoutError: status = "Timeout"
+        except Exception as e: status = type(e).__name__
+        ms = (time.time()-t0)*1000
+        ok = isinstance(status, int) and status in success_codes
+        stat(stat_name).record(ms, status, ok)
+        return body if ok else None
+
+    # Phase 1 — Register via BFF
+    async def phase_register(session, bff, n):
+        print(f"\n[1/6] Registering {n} users via BFF ({bff}/api/register)...")
+        async def reg(i):
+            uid = str(uuid.uuid4()).replace("-","")[:12]; uname = f"lt_{uid}"
+            r = await req(session, "POST", f"{bff}/api/register",
+                          "POST {BFF}/api/register",
+                          json_body={"username":uname,"password":TEST_PASSWORD,
+                                     "email":f"{uname}@lt.internal","fullName":f"LT {i}"},
+                          success_codes=(200,201,409))
+            return {"username":uname,"password":TEST_PASSWORD}
+        results = await asyncio.gather(*[reg(i) for i in range(n)], return_exceptions=True)
+        users = [r for r in results if isinstance(r,dict)]
+        s = stat("POST {BFF}/api/register")
+        print(f"  ✅ {s.success} new, {s.errors.get('409',0)} existing, {s.failed} failed")
+        return users
+
+    # Phase 2 — Login via Auth Server (OIDC Auth Code Grant)
+    async def phase_login(session, auth, users):
+        import secrets, hashlib, base64, re
+        from urllib.parse import urlparse, parse_qs, urlunparse
+        print(f"\n[2/6] Login {len(users)} users via OIDC Auth Code Flow with PKCE...")
+        token_url = f"{auth}/oauth2/token"
+        auth_url_tmpl = (f"{auth}/oauth2/authorize?response_type=code&client_id={BFF_CLIENT_ID}&"
+                         f"scope=openid%20profile&redirect_uri=http://localhost:8080/login/oauth2/code/exam-oidc&"
+                         f"code_challenge={{challenge}}&code_challenge_method=S256&state={{state}}")
+
+        def fix_url_if_auth(location, base_auth):
+            parsed_loc = urlparse(location)
+            parsed_base = urlparse(base_auth)
+            if "/login/oauth2/code" in parsed_loc.path:
+                return location
+            if not parsed_loc.netloc or parsed_loc.hostname in [parsed_base.hostname, "localhost", "auth-server", "127.0.0.1", "authorization-server"]:
+                return urlunparse((
+                    parsed_base.scheme,
+                    parsed_base.netloc,
+                    parsed_loc.path,
+                    parsed_loc.params,
+                    parsed_loc.query,
+                    parsed_loc.fragment
+                ))
+            return location
+
+        async def login(user):
+            cookie_jar = aiohttp.CookieJar(unsafe=True)
+            try:
+                async with aiohttp.ClientSession(cookie_jar=cookie_jar) as u_sess:
+                    verifier = secrets.token_urlsafe(64)
+                    sha256 = hashlib.sha256(verifier.encode('utf-8')).digest()
+                    challenge = base64.urlsafe_b64encode(sha256).decode('utf-8').replace('=', '').replace('+', '-').replace('/', '_')
+                    state = str(uuid.uuid4())
+                    auth_url = auth_url_tmpl.format(challenge=challenge, state=state)
+                    
+                    async with u_sess.get(auth_url, allow_redirects=False) as resp:
+                        if resp.status == 302:
+                            loc = resp.headers.get("Location", "")
+                            login_page_url = fix_url_if_auth(loc, auth)
+                        else:
+                            login_page_url = f"{auth}/login"
+
+                    async with u_sess.get(login_page_url, allow_redirects=False) as resp:
+                        html = await resp.text()
+
+                    csrf_match = re.search(r'name="_csrf"\s+value="([^"]+)"', html)
+                    if not csrf_match:
+                        csrf_match = re.search(r'value="([^"]+)"\s+name="_csrf"', html)
+                    csrf_token = csrf_match.group(1) if csrf_match else ""
+
+                    login_data = {"username": user["username"], "password": user["password"], "_csrf": csrf_token}
+                    post_login_url = f"{auth}/login"
+                    async with u_sess.post(post_login_url, data=login_data, allow_redirects=False) as resp:
+                        if resp.status == 302:
+                            loc = resp.headers.get("Location", "")
+                            auth_consent_url = fix_url_if_auth(loc, auth)
+                        else:
+                            auth_consent_url = auth_url
+
+                    async with u_sess.get(auth_consent_url, allow_redirects=False) as resp:
+                        if resp.status == 302:
+                            location = resp.headers.get("Location", "")
+                            parsed = urlparse(location)
+                            qs = parse_qs(parsed.query)
+                            code = qs.get("code", [None])[0]
+                            if code:
+                                token_data = {
+                                    "grant_type": "authorization_code",
+                                    "code": code,
+                                    "redirect_uri": "http://localhost:8080/login/oauth2/code/exam-oidc",
+                                    "client_id": BFF_CLIENT_ID,
+                                    "client_secret": BFF_CLIENT_SECRET,
+                                    "code_verifier": verifier
+                                }
+                                async with u_sess.post(token_url, data=token_data) as t_resp:
+                                    if t_resp.status == 200:
+                                        body = await t_resp.json()
+                                        if body and body.get("access_token"):
+                                            stat("POST {AUTH}/oauth2/token [login]").record(0, 200, True)
+                                            return {**user, "access_token": body["access_token"]}
+            except Exception:
+                pass
+            stat("POST {AUTH}/oauth2/token [login]").record(0, 400, False)
+            return None
+
+        results = await asyncio.gather(*[login(u) for u in users], return_exceptions=True)
+        authed  = [r for r in results if isinstance(r,dict) and r]
+        s = stat("POST {AUTH}/oauth2/token [login]")
+        print(f"  ✅ {len(authed)}/{len(users)} users authenticated via OIDC Code Grant")
+        if not authed:
+            print("  ⚠️ Fallback to synthetic tokens...")
+            return [{**u, "access_token": f"synthetic-{u['username']}"} for u in users]
+        return authed
+
+    # Phase 3 — Start Exam via BFF proxy
+    async def phase_start(session, bff, users, exam_id):
+        print(f"\n[3/6] Starting exam sessions via BFF for {len(users)} users...")
+        async def start(user):
+            body = await req(session, "POST", f"{bff}/api/proxy/mock-exam/start",
+                             "POST {BFF}→session /api/proxy/mock-exam/start",
+                             json_body={"examId": exam_id, "userId": user["username"]},
+                             headers={"Authorization": f"Bearer {user['access_token']}"})
+            if body:
+                sid = body.get("sessionId") or body.get("id")
+                if sid: return {**user, "session_id": sid}
+            return None
+        results = await asyncio.gather(*[start(u) for u in users], return_exceptions=True)
+        started = [r for r in results if isinstance(r,dict)]
+        print(f"  ✅ {len(started)}/{len(users)} sessions started via BFF")
+        return started
+
+    # Phase 4 — Stress: questions at 10 req/s via BFF
+    async def phase_stress_questions(session, bff, exam_id, users, duration_s=20):
+        n   = len(users)
+        url = f"{bff}/api/proxy/mock-exam/{exam_id}/questions"
+        sn  = "GET {BFF}→session /api/proxy/mock-exam/{id}/questions [STRESS 10rps]"
+        print(f"\n[4/6] ⚡ STRESS: {n} users × 10 req/s via BFF ({duration_s}s)...")
+        stop = asyncio.Event()
+        async def worker(user):
+            hdrs = {"Authorization": f"Bearer {user['access_token']}"}
+            while not stop.is_set():
+                await req(session, "GET", url, sn, headers=hdrs)
+                await asyncio.sleep(0.1)
+        tasks = []
+        for i, u in enumerate(users):
+            tasks.append(asyncio.create_task(worker(u)))
+            if i % 200 == 0 and i > 0: await asyncio.sleep(0.01)
+        await asyncio.sleep(duration_s)
+        stop.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        s = stat(sn); total = s.success+s.failed
+        print(f"  ✅ {total} requests | {s.success/(total or 1)*100:.1f}% success | {s.success/duration_s:.1f} RPS")
+
+    # Phase 5 — Submit exam via BFF proxy
+    async def phase_submit(session, bff, users, exam_id, q_ids):
+        print(f"\n[5/6] Submitting exams via BFF for {len(users)} users...")
+        async def submit(user):
+            await req(session, "POST", f"{bff}/api/proxy/mock-exam/submit",
+                      "POST {BFF}→session /api/proxy/mock-exam/submit",
+                      json_body={"sessionId":user["session_id"],
+                                 "answers":[{"questionId":qid,"answer":"Option 1","timeSpentMs":random.randint(10000,90000)} for qid in q_ids]},
+                      headers={"Authorization": f"Bearer {user['access_token']}"})
+        await asyncio.gather(*[submit(u) for u in users], return_exceptions=True)
+        s = stat("POST {BFF}→session /api/proxy/mock-exam/submit")
+        print(f"  ✅ {s.success}/{s.success+s.failed} submitted")
+
+    # Phase 6 — Flood incidents via BFF proxy
+    async def phase_flood(session, bff, users, ipu):
+        n   = len(users); total = n * ipu
+        url = f"{bff}/api/proxy/incident/client-event"
+        sn  = "POST {BFF}→incident /api/proxy/incident/client-event [FLOOD]"
+        print(f"\n[6/6] ⚡ FLOOD: {n}×{ipu}={total} concurrent POSTs via BFF...")
+        def payload(sid, idx):
+            return {"sessionId":sid,"eventType":"SNAPSHOT_VIOLATION",
+                    "violationType":random.choice(VIOLATION_TYPES),
+                    "violationState":random.choice(VIOLATION_STATES),
+                    "evidenceUrl":f"http://minio:9000/exam-evidence/{sid}/snap_{idx:03d}.jpg",
+                    "objectKey":f"{sid}/snap_{idx:03d}.jpg",
+                    "fileSize":random.randint(8000,40000),
+                    "timestamp":int(time.time()*1000)-(ipu-idx)*5000}
+        tasks = [asyncio.create_task(
+                   req(session,"POST",url,sn,json_body=payload(u["session_id"],i),
+                       headers={"Authorization":f"Bearer {u['access_token']}"}))
+                 for u in users for i in range(ipu)]
+        t0 = time.time()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        elapsed = time.time()-t0
+        s = stat(sn); done = s.success+s.failed
+        print(f"  ✅ {done} reqs in {elapsed:.2f}s | {s.success/elapsed:.1f} RPS | {s.success/(done or 1)*100:.1f}% success")
+
+    def print_report(total_sec):
+        print("\n"+"="*72)
+        print("         📈  FULL STACK PERFORMANCE REPORT")
+        print("         (Load Test Pod → BFF → Backend Services)")
+        print("="*72+f"\n  Wall-clock: {total_sec:.2f}s\n")
+        for name, s in _stats.items():
+            if s.success+s.failed == 0: continue
+            print(f"  ┌─ {name}")
+            print(s.report(total_sec))
+            print()
+        print("="*72)
+
+    async def run(args):
+        bff  = args.bff.rstrip("/"); auth = args.auth.rstrip("/")
+        n    = args.users
+        print("="*72)
+        print("  🚀  NON-POLICY FULL STACK LOAD TEST")
+        print(f"  BFF={bff}  AUTH={auth}  users={n}")
+        print("="*72)
+        connector = aiohttp.TCPConnector(limit=n*3+200, limit_per_host=0, ttl_dns_cache=600)
+        t0 = time.time()
+        async with aiohttp.ClientSession(connector=connector) as http:
+            if args.skip_register:
+                users = [{"username":f"lt_{str(uuid.uuid4()).replace('-','')[:12]}","password":TEST_PASSWORD} for _ in range(n)]
+                print(f"\n[1/6] Skipped (--skip-register). {n} synthetic users.")
+            else:
+                users = await phase_register(http, bff, n)
+            if not users: print("❌ No users. Abort."); return
+            authed = await phase_login(http, auth, users)
+            started = await phase_start(http, bff, authed, args.exam_id)
+            if not started: print("❌ No sessions. Abort."); return
+            q_ids = []
+            try:
+                q_body = await req(http, "GET", f"{bff}/api/proxy/mock-exam/{args.exam_id}/questions", "GET questions list")
+                if q_body and "questions" in q_body:
+                    q_ids = [q["id"] for q in q_body["questions"]]
+            except Exception as e:
+                print(f"⚠️ Failed to load questions: {e}")
+            await phase_stress_questions(http, bff, args.exam_id, started, args.questions_duration)
+            await phase_submit(http, bff, started, args.exam_id, q_ids)
+            await phase_flood(http, bff, started, args.incidents_per_user)
+        print_report(time.time()-t0)
+
+    def main():
+        p = argparse.ArgumentParser()
+        p.add_argument("--bff",  default=os.getenv("LT_BFF_URL",  "http://bff:8080"))
+        p.add_argument("--auth", default=os.getenv("LT_AUTH_URL", "http://auth-server:9000"))
+        p.add_argument("--users",              type=int, default=int(os.getenv("LT_USERS","1000")))
+        p.add_argument("--exam-id",            default=os.getenv("LT_EXAM_ID",DEFAULT_EXAM_ID))
+        p.add_argument("--questions-duration", type=int, default=int(os.getenv("LT_QUESTIONS_DURATION","20")))
+        p.add_argument("--incidents-per-user", type=int, default=int(os.getenv("LT_INCIDENTS_PER_USER","20")))
+        p.add_argument("--skip-register", action="store_true", default=os.getenv("LT_SKIP_REGISTER","false").lower()=="true")
+        asyncio.run(run(p.parse_args()))
+
+    if __name__ == "__main__":
+        main()
+
+---
+# ---------------------------------------------------------------------------- #
+#  Kubernetes Job — runs the full-stack test INSIDE the cluster
+# ---------------------------------------------------------------------------- #
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: load-test-non-policy
+  namespace: exam-platform
+  labels:
+    app: load-test-non-policy
+    type: performance-test
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "false"
+      labels:
+        app: load-test-non-policy
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: test-runner
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              pip install --quiet aiohttp && \
+              python /scripts/load_test_all_apis.py
+          env:
+            - name: LT_BFF_URL
+              value: "http://bff-gateway:8080"
+            - name: LT_AUTH_URL
+              value: "http://authorization-server:9000"
+
+            - name: LT_USERS
+              value: "200"
+            - name: LT_EXAM_ID
+              value: "e1000000-0000-0000-0000-000000000001"
+            - name: LT_QUESTIONS_DURATION
+              value: "20"          # Seconds for question-load stress phase
+            - name: LT_INCIDENTS_PER_USER
+              value: "20"          # Incidents flushed per user at exam end
+            - name: LT_SKIP_REGISTER
+              value: "false"       # "true" if users pre-exist in DB
+
+          resources:
+            requests:
+              cpu:    "500m"
+              memory: "512Mi"
+            limits:
+              cpu:    "2"
+              memory: "1Gi"
+          volumeMounts:
+            - name: script-volume
+              mountPath: /scripts
+      volumes:
+        - name: script-volume
+          configMap:
+            name: load-test-script-config

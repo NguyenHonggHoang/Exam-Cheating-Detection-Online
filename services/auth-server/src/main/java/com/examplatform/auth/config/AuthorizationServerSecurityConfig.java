@@ -76,6 +76,7 @@ public class AuthorizationServerSecurityConfig {
         http
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/**", "/login", "/error", "/oauth2/consent").permitAll()
+                .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
                 .anyRequest().authenticated())
             .formLogin(form -> form
                 .loginPage("/login")
@@ -95,21 +96,83 @@ public class AuthorizationServerSecurityConfig {
     @Bean
     public OAuth2TokenCustomizer<JwtEncodingContext> authoritiesClaimCustomizer() {
         return context -> {
-            // Log token type being processed
-            logger.info("Token customizer called for token type: {}", context.getTokenType().getValue());
+            logger.info("Token customizer called for token type: {} and grant type: {}", 
+                    context.getTokenType().getValue(), context.getAuthorizationGrantType().getValue());
             
-            // Add authorities to ALL token types (ACCESS_TOKEN, ID_TOKEN)
-            Authentication principal = context.getPrincipal();
+            org.springframework.security.oauth2.core.AuthorizationGrantType grantType = context.getAuthorizationGrantType();
             
-            Set<String> authorities = principal.getAuthorities().stream()
-                    .map(GrantedAuthority::getAuthority)
-                    .collect(Collectors.toSet());
+            if (org.springframework.security.oauth2.core.AuthorizationGrantType.CLIENT_CREDENTIALS.equals(grantType)) {
+                String clientId = context.getRegisteredClient().getClientId();
+                java.util.List<String> roles = new java.util.ArrayList<>();
+                java.util.List<String> permissions = new java.util.ArrayList<>();
+                
+                if ("admin-service".equals(clientId)) {
+                    roles.add("ROLE_ADMIN");
+                    permissions.add("user.create");
+                    permissions.add("user.read");
+                    permissions.add("exam.manage");
+                } else if ("session-service".equals(clientId)) {
+                    roles.add("ROLE_PROCTOR");
+                    permissions.add("incident.create");
+                } else if ("incident-service".equals(clientId)) {
+                    roles.add("ROLE_PROCTOR");
+                    permissions.add("incident.read");
+                    permissions.add("incident.write");
+                } else if ("auth-service".equals(clientId)) {
+                    // auth-service được gọi user-service
+                    permissions.add("user.read");
+                }
+                
+                context.getClaims()
+                       .claim("roles", roles)
+                       .claim("permissions", permissions);
+                       
+                logger.info("Client Credentials Token Customizer: client={}, roles={}, permissions={}", clientId, roles, permissions);
+            } else {
+                Authentication principal = context.getPrincipal();
+                if (principal != null) {
+                    Set<String> authorities = principal.getAuthorities().stream()
+                            .map(GrantedAuthority::getAuthority)
+                            .collect(Collectors.toSet());
 
-            logger.info("Principal authorities: {}", authorities);
-            
-            if (!authorities.isEmpty()) {
-                context.getClaims().claim("authorities", authorities);
-                logger.info("Added authorities to {} token: {}", context.getTokenType().getValue(), authorities);
+                    Set<String> mappedRoles = authorities.stream()
+                            .map(role -> {
+                                if ("ROLE_CANDIDATE".equals(role)) return "ROLE_STUDENT";
+                                return role;
+                            })
+                            .collect(Collectors.toSet());
+
+                    context.getClaims().claim("roles", mappedRoles);
+                    
+                    java.util.List<String> permissions = new java.util.ArrayList<>();
+                    if (mappedRoles.contains("ROLE_ADMIN")) {
+                        permissions.add("user.create");
+                        permissions.add("user.read");
+                        permissions.add("exam.manage");
+                    } else if (mappedRoles.contains("ROLE_PROCTOR")) {
+                        permissions.add("incident.read");
+                        permissions.add("incident.write");
+                    } else if (mappedRoles.contains("ROLE_STUDENT")) {
+                        permissions.add("exam.read");
+                    }
+                    context.getClaims().claim("permissions", permissions);
+
+                    // Dynamically assign scopes based on user roles in the database
+                    Set<String> scopes = new java.util.HashSet<>(context.getAuthorizedScopes());
+                    if (mappedRoles.contains("ROLE_ADMIN")) {
+                        scopes.add("exam.read");
+                        scopes.add("exam.write");
+                    } else if (mappedRoles.contains("ROLE_PROCTOR")) {
+                        scopes.add("exam.read");
+                        scopes.add("exam.write");
+                    } else if (mappedRoles.contains("ROLE_STUDENT")) {
+                        scopes.add("exam.read");
+                    }
+                    context.getClaims().claim("scope", scopes);
+
+                    logger.info("User Login Token Customizer: principal={}, roles={}, permissions={}, scopes={}", 
+                            principal.getName(), mappedRoles, permissions, scopes);
+                }
             }
         };
     }

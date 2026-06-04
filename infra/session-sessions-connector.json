@@ -1,0 +1,17 @@
+{
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "session-db-primary-service",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "postgres",
+    "database.dbname": "session_db",
+    "table.include.list": "public.sessions",
+    "topic.prefix": "exam-session",
+    "slot.name": "session_slot",
+    "plugin.name": "pgoutput",
+    "publication.autocreate.mode": "filtered",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "false",
+    "transforms.unwrap.delete.handling.mode": "rewrite"
+}

@@ -70,10 +70,12 @@ public class KafkaConfig {
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         
-        // Idempotent producer
-        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-        props.put(ProducerConfig.ACKS_CONFIG, "all");
+        // High performance producer configuration for telemetry
+        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, false);
+        props.put(ProducerConfig.ACKS_CONFIG, "1");
         props.put(ProducerConfig.RETRIES_CONFIG, 3);
+        props.put(ProducerConfig.LINGER_MS_CONFIG, 5); // 5ms delay to batch events
+        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 32768); // 32KB batch size
         
         return new DefaultKafkaProducerFactory<>(props);
     }
@@ -110,6 +112,36 @@ public class KafkaConfig {
             org.springframework.kafka.support.serializer.DeserializationException.class
         );
         
+        factory.setCommonErrorHandler(errorHandler);
+        
+        return factory;
+    }
+
+    /**
+     * Concurrent Kafka Listener Container Factory for batch processing
+     */
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> batchKafkaListenerContainerFactory(
+            KafkaTemplate<String, String> kafkaTemplate
+    ) {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory = 
+            new ConcurrentKafkaListenerContainerFactory<>();
+        
+        factory.setConsumerFactory(consumerFactory());
+        factory.setBatchListener(true); // Enable batch listener mode
+        
+        // Commit after processing the whole batch
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.BATCH);
+        
+        // Reuse common error handler for batch recovery if needed
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(
+            new DeadLetterPublishingRecoverer(kafkaTemplate),
+            new FixedBackOff(1000L, 3L)
+        );
+        errorHandler.addNotRetryableExceptions(
+            com.fasterxml.jackson.core.JsonParseException.class,
+            org.springframework.kafka.support.serializer.DeserializationException.class
+        );
         factory.setCommonErrorHandler(errorHandler);
         
         return factory;

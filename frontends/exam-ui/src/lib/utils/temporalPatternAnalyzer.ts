@@ -12,7 +12,7 @@
 // ========== Types ==========
 
 export interface TemporalEvent {
-    type: 'head_down' | 'head_side' | 'micro_pause' | 'answer_submit' | 'pre_suspicion' | 'blur' | 'focus' | 'window_resize' | 'tab_switch';
+    type: 'head_down' | 'head_side' | 'micro_pause' | 'answer_submit' | 'pre_suspicion' | 'blur' | 'focus' | 'window_resize' | 'tab_switch' | 'typing_speed';
     timestamp: number;
     duration?: number;  // For events with duration (ms)
     metadata?: {
@@ -618,7 +618,7 @@ export class TemporalPatternAnalyzer {
         const typingSpeeds = this.events
             .filter(e => e.type === 'typing_speed' && e.metadata?.confidence)
             .map(e => e.metadata!.confidence!);
-        
+
         if (typingSpeeds.length === 0) return undefined;
         return this.mean(typingSpeeds);
     }

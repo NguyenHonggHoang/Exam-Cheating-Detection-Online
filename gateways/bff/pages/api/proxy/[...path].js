@@ -22,6 +22,8 @@ const publicRoutes = [
   /^sessions\/[a-f0-9-]+\/join$/, // Join session (student gets LiveKit token)
   /^mock-exam/, // Mock exam endpoints for testing
   /^api\/mock-exam/, // Nested mock exam endpoints (from /api/proxy/api/mock-exam)
+  /^incident\/client-event/, // Incident event endpoint for load testing
+  /^api\/incident\/client-event/, // Nested incident event endpoint
   /^api\/exams\/[a-f0-9-]+\/seb-config$/, // SEB config download (SEB is a fresh browser without cookies)
 ];
 

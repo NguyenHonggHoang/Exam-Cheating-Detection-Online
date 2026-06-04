@@ -1,11 +1,12 @@
 package com.example.exam.controller;
 
 import com.example.exam.dto.ClientEventRequest;
-import com.example.exam.service.ClientEventService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -23,7 +24,8 @@ public class ClientEventController {
 
     private static final Logger log = LoggerFactory.getLogger(ClientEventController.class);
 
-    private final ClientEventService clientEventService;
+    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     /**
      * Receive client-side AI detection event
@@ -32,48 +34,31 @@ public class ClientEventController {
      * 1. Frontend detects violation via TensorFlow
      * 2. Frontend uploads evidence to MinIO
      * 3. Frontend sends this event with evidence URL
-     * 4. Incident Service creates incident record
-     * 5. Optional: Trigger AI worker for server-side analysis
+     * 4. Controller publishes event to Kafka for async batch processing
      * 
      * @param request Client event with evidence metadata
-     * @return 200 OK if processed successfully
+     * @return 202 Accepted if published successfully
      */
     @PostMapping("/client-event")
     public ResponseEntity<Void> receiveClientEvent(@RequestBody ClientEventRequest request) {
-        // Debug: Log all request fields
-        log.info("Received client event: sessionId={}, type={}, violation={}, evidenceUrl={}", 
-            request.getSessionId(), 
-            request.getEventType(), 
-            request.getViolationType(),
-            request.getEvidenceUrl() != null ? request.getEvidenceUrl().substring(0, Math.min(50, request.getEvidenceUrl().length())) + "..." : "null");
+        log.info("Received client event for ingestion: sessionId={}, type={}", 
+            request.getSessionId(), request.getEventType());
 
         try {
-            // Validate request - log detailed info for debugging
             if (request.getSessionId() == null) {
-                log.warn("Client event missing sessionId. Full request: eventType={}, violationType={}", 
-                    request.getEventType(), request.getViolationType());
+                log.warn("Client event missing sessionId");
                 return ResponseEntity.badRequest().build();
             }
 
-            // Evidence URL is required only for snapshot/clip events, not browser events
-            boolean isEvidenceEvent = request.getEventType() != null && 
-                (request.getEventType().contains("SNAPSHOT") || request.getEventType().contains("CLIP"));
-            
-            if (isEvidenceEvent && (request.getEvidenceUrl() == null || request.getEvidenceUrl().isEmpty())) {
-                log.warn("Evidence event missing evidenceUrl");
-                return ResponseEntity.badRequest().build();
-            }
+            // Publish to Kafka topic 'incident-client-events'
+            String json = objectMapper.writeValueAsString(request);
+            kafkaTemplate.send("incident-client-events", request.getSessionId().toString(), json);
 
-            // Process event
-            clientEventService.processClientEvent(request);
-
-            log.info("Client event processed successfully: sessionId={}, type={}", 
-                request.getSessionId(), request.getEventType());
-
-            return ResponseEntity.ok().build();
+            log.info("Client event successfully published to Kafka: sessionId={}", request.getSessionId());
+            return ResponseEntity.accepted().build();
 
         } catch (Exception e) {
-            log.error("Failed to process client event: sessionId={}", request.getSessionId(), e);
+            log.error("Failed to publish client event to Kafka: sessionId={}", request.getSessionId(), e);
             return ResponseEntity.internalServerError().build();
         }
     }

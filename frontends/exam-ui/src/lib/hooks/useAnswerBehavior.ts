@@ -26,6 +26,7 @@ export type AnswerEvent = {
     hadPreSuspicionDuring: boolean;
     startedAt: number;
     submittedAt: number;
+    averageTypingSpeed?: number;
 };
 
 export type BehaviorAnalysis = {
@@ -144,7 +145,6 @@ export function useAnswerBehavior(options: UseAnswerBehaviorOptions) {
     const markPreSuspicionDuring = useCallback(() => {
         if (!enabled) return;
 
-        // Mark the current active question
         setPreSuspicionFlags(prev => {
             const activeQuestionId = Object.keys(currentQuestionStart).find(
                 id => !answerEvents.some(e => e.questionId === id)
@@ -165,7 +165,8 @@ export function useAnswerBehavior(options: UseAnswerBehaviorOptions) {
         questionId: string,
         questionIndex: number,
         difficulty: 'easy' | 'medium' | 'hard',
-        answer: string
+        answer: string,
+        averageTypingSpeed?: number // Added optional parameter
     ) => {
         if (!enabled) return;
 
@@ -190,16 +191,14 @@ export function useAnswerBehavior(options: UseAnswerBehaviorOptions) {
             answerChanges: changes,
             hadPreSuspicionDuring: hadPreSuspicion,
             startedAt: startTime,
-            submittedAt
+            submittedAt,
+            averageTypingSpeed // Store it in event
         };
 
         setAnswerEvents(prev => {
-            // Remove existing event for this question if it exists (e.g., user navigated back)
             const filtered = prev.filter(e => e.questionId !== questionId);
             return [...filtered, event];
         });
-
-        // Detect anomalies for this answer
         const anomalies = detectAnswerAnomalies(event);
         if (anomalies.length > 0 && onAnomalyDetected) {
             onAnomalyDetected(anomalies);
@@ -230,34 +229,28 @@ export function useAnswerBehavior(options: UseAnswerBehaviorOptions) {
             };
         }
 
-        // Calculate statistics
         const totalTime = events.reduce((sum, e) => sum + e.timeToAnswerMs, 0);
         const avgTime = totalTime / events.length;
         const totalRevisions = events.reduce((sum, e) => sum + e.revisionCount, 0);
         const avgRevisions = totalRevisions / events.length;
 
-        // Count rapid and slow answers
         const rapidAnswers = events.filter(e => {
             const threshold = e.difficulty === 'easy' ? 5000 : e.difficulty === 'medium' ? 10000 : 15000;
             return e.timeToAnswerMs < threshold;
         }).length;
 
-        const slowAnswers = events.filter(e => e.timeToAnswerMs > 300000).length; // > 5 min
+        const slowAnswers = events.filter(e => e.timeToAnswerMs > 300000).length;
 
-        // Detect all anomalies
         const allAnomalies: BehaviorAnomaly[] = [];
         events.forEach(event => {
             const eventAnomalies = detectAnswerAnomalies(event);
             allAnomalies.push(...eventAnomalies);
         });
 
-        // Pattern analysis
         const preSuspicionCount = events.filter(e => e.hadPreSuspicionDuring).length;
 
-        // Calculate overall risk score
         const riskScore = calculateRiskScore(events, allAnomalies);
 
-        // Notify if risk score changed significantly
         if (Math.abs(riskScore - lastRiskScoreRef.current) > 10 && onRiskScoreChange) {
             lastRiskScoreRef.current = riskScore;
             onRiskScoreChange(riskScore);
@@ -274,7 +267,7 @@ export function useAnswerBehavior(options: UseAnswerBehaviorOptions) {
             },
             patterns: {
                 preSuspicionCount,
-                timeClusterAnomalies: 0 // TODO: Implement clustering
+                timeClusterAnomalies: 0
             }
         };
     }, [answerEvents, onRiskScoreChange]);
@@ -289,11 +282,11 @@ export function useAnswerBehavior(options: UseAnswerBehaviorOptions) {
     };
 }
 
-// Helper: Detect anomalies for a single answer
+
+
 function detectAnswerAnomalies(event: AnswerEvent): BehaviorAnomaly[] {
     const anomalies: BehaviorAnomaly[] = [];
 
-    // RAPID_ANSWER: Too fast for difficulty
     const timeThreshold = event.difficulty === 'easy' ? 5000 :
         event.difficulty === 'medium' ? 10000 : 15000;
 
@@ -307,7 +300,6 @@ function detectAnswerAnomalies(event: AnswerEvent): BehaviorAnomaly[] {
         });
     }
 
-    // EXCESSIVE_REVISION: Too many answer changes
     if (event.revisionCount > 5) {
         anomalies.push({
             type: 'EXCESSIVE_REVISION',
@@ -318,7 +310,6 @@ function detectAnswerAnomalies(event: AnswerEvent): BehaviorAnomaly[] {
         });
     }
 
-    // SUSPICIOUS_PATTERN: Pre-suspicion active during answer
     if (event.hadPreSuspicionDuring) {
         anomalies.push({
             type: 'SUSPICIOUS_PATTERN',
@@ -329,23 +320,29 @@ function detectAnswerAnomalies(event: AnswerEvent): BehaviorAnomaly[] {
         });
     }
 
+    if (event.averageTypingSpeed && event.averageTypingSpeed > 12) {
+        anomalies.push({
+            type: 'TYPING_SPEED_ANOMALY',
+            severity: 'medium',
+            score: 30,
+            description: `Abnormal typing speed: ${event.averageTypingSpeed.toFixed(1)} chars/sec`,
+            evidence: { questionId: event.questionId, speed: event.averageTypingSpeed }
+        });
+    }
+
     return anomalies;
 }
 
-// Helper: Calculate overall risk score
 function calculateRiskScore(events: AnswerEvent[], anomalies: BehaviorAnomaly[]): number {
     if (events.length === 0) return 0;
 
     let score = 0;
 
-    // Base score from anomalies
     anomalies.forEach(anomaly => {
         score += anomaly.score;
     });
 
-    // Normalize by number of questions
     score = score / events.length;
 
-    // Cap at 100
     return Math.min(100, Math.round(score));
 }

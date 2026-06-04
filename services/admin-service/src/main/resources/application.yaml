@@ -38,7 +38,16 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://tempo-service:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
 
 admin:
   api-user:
@@ -57,4 +66,10 @@ admin:
       - exam.read
       - exam.write
       - offline_access
+
+grpc:
+  client:
+    user-service:
+      address: ${GRPC_USER_SERVICE_ADDRESS:static://localhost:9090}
+      negotiationType: plaintext
 

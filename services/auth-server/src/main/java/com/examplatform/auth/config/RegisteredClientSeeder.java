@@ -31,7 +31,17 @@ public class RegisteredClientSeeder {
             if (properties.spaClient() != null) {
                 seedSpaClient(repository, properties.spaClient());
             }
-            seedServiceClient(repository, passwordEncoder, "session-service", "session-secret");
+            // Seed clients for microservices with specific scopes
+            seedServiceClient(repository, passwordEncoder, "admin-service", "admin-secret", 
+                    java.util.Set.of("exam.read", "exam.write", "admin.manage", "incident.read"));
+            seedServiceClient(repository, passwordEncoder, "session-service", "session-secret", 
+                    java.util.Set.of("incident.write", "exam.read"));
+            seedServiceClient(repository, passwordEncoder, "incident-service", "incident-secret", 
+                    java.util.Set.of("incident.read", "incident.write"));
+            seedServiceClient(repository, passwordEncoder, "user-service", "user-secret", 
+                    java.util.Set.of("exam.read"));
+            seedServiceClient(repository, passwordEncoder, "auth-service", "auth-secret", 
+                    java.util.Set.of("exam.read")); // auth-service được gọi user-service
         };
     }
 
@@ -57,16 +67,24 @@ public class RegisteredClientSeeder {
                 .clientName("Exam BFF Client")
                 .clientSecret(passwordEncoder.encode(client.clientSecret()))
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
                 .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                // PASSWORD grant (ROPC) is required for programmatic login in load tests.
+                // This grant allows the test script to obtain tokens without browser interaction.
+                // WARNING: Do NOT enable this in production for user-facing clients.
+                .authorizationGrantType(AuthorizationGrantType.PASSWORD)
                 .redirectUri(client.redirectUri())
                 .postLogoutRedirectUri(postLogoutRedirectUri)
                 .scope(OidcScopes.OPENID)
                 .scope(OidcScopes.PROFILE)
                 .scope("exam.read")
                 .scope("exam.write")
+                .scope("incident.read")
+                .scope("incident.write")
+                .scope("admin.manage")
                 .clientSettings(ClientSettings.builder()
-                        .requireAuthorizationConsent(true)
+                        .requireAuthorizationConsent(false) // ROPC does not support consent screen
                         .build())
                 .tokenSettings(TokenSettings.builder()
                         .accessTokenTimeToLive(Duration.ofMinutes(15))
@@ -100,6 +118,8 @@ public class RegisteredClientSeeder {
                 .scope(OidcScopes.PROFILE)
                 .scope("exam.read")
                 .scope("exam.write")
+                .scope("incident.read")
+                .scope("incident.write")
                 .clientSettings(ClientSettings.builder()
                         .requireAuthorizationConsent(false)
                         .requireProofKey(true)
@@ -117,19 +137,25 @@ public class RegisteredClientSeeder {
     private void seedServiceClient(RegisteredClientRepository repository,
                                    PasswordEncoder passwordEncoder,
                                    String clientId,
-                                   String clientSecret) {
+                                   String clientSecret,
+                                   java.util.Set<String> scopes) {
         if (repository.findByClientId(clientId) != null) {
             return;
         }
 
-        RegisteredClient registeredClient = RegisteredClient.withId(UUID.randomUUID().toString())
+        RegisteredClient.Builder builder = RegisteredClient.withId(UUID.randomUUID().toString())
                 .clientId(clientId)
-                .clientName("Session Service Client")
+                .clientName(clientId + " Client")
                 .clientSecret(passwordEncoder.encode(clientSecret))
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .scope("internal.read")
-                .scope("internal.write")
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS);
+
+        for (String scope : scopes) {
+            builder.scope(scope);
+        }
+
+        RegisteredClient registeredClient = builder
                 .tokenSettings(TokenSettings.builder()
                         .accessTokenTimeToLive(Duration.ofHours(1))
                         .build())

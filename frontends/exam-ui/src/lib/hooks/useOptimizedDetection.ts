@@ -1,12 +1,13 @@
+
 import { useRef, useEffect, useState, useCallback } from 'react';
 import * as tf from '@tensorflow/tfjs';
 import * as blazeface from '@tensorflow-models/blazeface';
 import * as faceLandmarksDetection from '@tensorflow-models/face-landmarks-detection';
 import { initializeTFBackend, warmUpModels } from '../utils/tfBackend';
-import { calculateEyeAspectRatio, calculateHeadPose, isLookingAway, calculateIrisGaze, analyzeFaceQuality, calculateFaceDistance, getScreenMetrics, calculateEffectiveGaze, type GazeCalibration, type FaceQuality, type EffectiveGazeResult, LOOK_AWAY_THRESHOLDS } from '../utils/faceAnalysis';
+import { calculateFaceDistance, calculateHeadPose, calculateEffectiveGaze, calculateIrisGaze, analyzeFaceQuality, calculateEyeAspectRatio, isLookingAway, getScreenMetrics, type FaceQuality, type EffectiveGazeResult, LOOK_AWAY_THRESHOLDS } from '../utils/faceAnalysis';
 import { HeadPose } from '../types/detection';
 import { ViolationStateMachine, ViolationType as SMViolationType } from '../utils/violationStateMachine';
-import { compositeDetector, type CompositeViolation } from '../utils/compositeViolationDetector';
+
 import { CircularVideoBuffer, useCircularBuffer } from '../utils/circularVideoBuffer';
 import {
     uploadEvidence,
@@ -37,20 +38,6 @@ export interface UseOptimizedDetectionOptions {
     onPreSuspicionTriggered?: (pattern: string, confidence: number) => void;
 }
 
-/**
- * Optimized Detection Hook - Production Ready
- * 
- * UPDATED: Now accepts external stream from useSharedStream
- * UPDATED: Uses hybrid evidence collection (snapshot client + video Egress)
- * 
- * Features:
- * - Dual canvas (320x240 inference, 640x480 display)
- * - Throttled detection (5 FPS)
- * - State machine for violations
- * - Hybrid evidence: Snapshots from client, Video clips from LiveKit Egress
- * - MinIO presigned upload
- * - Upload throttling
- */
 export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
     const {
         sessionId,
@@ -60,12 +47,11 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
         config = {},
         onViolation,
         onEvidenceUploaded,
-        useEgress = true,
+        useEgress = false,
         enablePreSuspicion = true,
         onPreSuspicionTriggered
     } = options;
 
-    // Egress recording throttle: 30 seconds between triggers for same session
     const lastEgressTriggerRef = useRef<number>(0);
     const EGRESS_TRIGGER_COOLDOWN_MS = 30000;
 
@@ -78,40 +64,36 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                 onPreSuspicionTriggered(result.pattern, result.confidence);
             }
 
-            // Use refs to get current values (avoid stale closure)
             const currentRoomName = roomNameRef.current;
             const currentSessionId = sessionIdRef.current;
             const now = Date.now();
             const timeSinceLastEgress = now - lastEgressTriggerRef.current;
 
-            console.log(`[PreSuspicion] onPreSuspicionTriggered: pattern=${result.pattern}, confidence=${result.confidence.toFixed(1)}, useEgress=${useEgress}, roomName=${currentRoomName}, timeSinceLastEgress=${(timeSinceLastEgress / 1000).toFixed(1)}s`);
+            console.log(`[PreSuspicion] onPreSuspicionTriggered: pattern = ${result.pattern}, confidence = ${result.confidence.toFixed(1)}, useEgress = ${useEgress}, roomName = ${currentRoomName}, timeSinceLastEgress = ${(timeSinceLastEgress / 1000).toFixed(1)} s`);
 
-            // Check throttle: skip if egress was triggered recently
             if (useEgress && currentRoomName && result.confidence >= 35 && timeSinceLastEgress >= EGRESS_TRIGGER_COOLDOWN_MS) {
-                console.log(`[PreSuspicion] Triggering early Egress recording: pattern=${result.pattern}, confidence=${result.confidence.toFixed(2)}`);
+                console.log(`[PreSuspicion] Triggering early Egress recording: pattern = ${result.pattern}, confidence = ${result.confidence.toFixed(2)} `);
                 try {
-                    // Normalize pattern - strip ESCALATED_ prefix to avoid duplicate incident types
-                    // (PRE_SUSPICIOUS_ESCALATED_phone_below would be redundant with PRE_SUSPICIOUS_phone_below)
                     const basePattern = result.pattern.replace('ESCALATED_', '');
                     const egressResult = await triggerEgressRecording({
                         sessionId: currentSessionId,
                         roomName: currentRoomName,
-                        violationType: `PRE_SUSPICIOUS_${basePattern}` as any,
+                        violationType: `PRE_SUSPICIOUS_${basePattern} ` as any,
                         durationSeconds: 15
                     });
                     if (egressResult.success) {
-                        console.log(`[PreSuspicion] ✅ Egress recording started: ${egressResult.egressId}`);
-                        lastEgressTriggerRef.current = now; // Update throttle timestamp
+                        console.log(`[PreSuspicion] ✅ Egress recording started: ${egressResult.egressId} `);
+                        lastEgressTriggerRef.current = now;
                     } else {
-                        console.warn(`[PreSuspicion] Egress failed: ${egressResult.error}`);
+                        console.warn(`[PreSuspicion] Egress failed: ${egressResult.error} `);
                     }
                 } catch (err) {
                     console.error('[PreSuspicion] Failed to trigger Egress:', err);
                 }
             } else if (timeSinceLastEgress < EGRESS_TRIGGER_COOLDOWN_MS) {
-                console.log(`[PreSuspicion] Skipped Egress: throttled (${((EGRESS_TRIGGER_COOLDOWN_MS - timeSinceLastEgress) / 1000).toFixed(1)}s remaining)`);
+                console.log(`[PreSuspicion] Skipped Egress: throttled(${((EGRESS_TRIGGER_COOLDOWN_MS - timeSinceLastEgress) / 1000).toFixed(1)}s remaining)`);
             } else {
-                console.log(`[PreSuspicion] Skipped Egress: useEgress=${useEgress}, roomName=${currentRoomName}, confidence=${result.confidence}`);
+                console.log(`[PreSuspicion] Skipped Egress: useEgress = ${useEgress}, roomName = ${currentRoomName}, confidence = ${result.confidence} `);
             }
         }
     });
@@ -137,7 +119,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
     const { createClip, status: bufferStatus } = useCircularBuffer({
         stream,
         options: {
-            maxDurationMs: 10000,
+            maxDurationMs: 15000,
             videoBitsPerSecond: 250000
         }
     });
@@ -147,20 +129,10 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
     const [detectionResult, setDetectionResult] = useState<DetectionResult | null>(null);
     const [uploading, setUploading] = useState(false);
 
-    // REMOVED: Inline pre-suspicion state (now handled by usePreSuspicionDetection hook)
-    // const [inlinePreSuspicionActive, setInlinePreSuspicionActive] = useState(false);
-    // const [inlinePreSuspicionResult, setInlinePreSuspicionResult] = useState(null);
-
-    const calibrationRef = useRef<GazeCalibration | null>(null);
 
     const lookAwayStartRef = useRef<number | null>(null);
     const lastLookAwayLogRef = useRef<number>(0);
     const lastPoseLogRef = useRef<number>(0);
-
-    // REMOVED: Inline pre-suspicion refs (now handled by usePreSuspicionDetection hook)
-    // const preSuspicionTriggeredRef = useRef<boolean>(false);
-    // const preSuspicionStartTimeRef = useRef<number | null>(null);
-    // const lastPreSuspicionLogRef = useRef<number>(0);
 
     const roomNameRef = useRef<string | undefined>(roomName);
     const sessionIdRef = useRef<string>(sessionId);
@@ -352,7 +324,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                         z: (kp as any).z || 0
                     }));
 
-                    headPose = calculateHeadPose(landmarks, null);
+                    headPose = calculateHeadPose(landmarks);
                     const rawEyeState = calculateEyeAspectRatio(landmarks);
 
                     // Calculate iris gaze for enhanced look-away detection
@@ -363,7 +335,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
 
                     // Log face quality warnings occasionally
                     if (faceQuality.warnings.length > 0 && Math.random() < 0.05) {
-                        console.warn(`[Detection] Face quality warnings:`, faceQuality.warnings);
+                        console.warn(`[Detection] Face quality warnings: `, faceQuality.warnings);
                     }
 
                     // Convert EyeState to DetectionResult format
@@ -383,7 +355,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                     landmarks,
                     video.videoWidth,
                     video.videoHeight,
-                    calibrationRef.current?.baselineDistance
+                    undefined // calibrationRef removed
                 );
             }
 
@@ -395,8 +367,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
             const effectiveGazeResult = headPose ? calculateEffectiveGaze(headPose, {
                 irisGaze,
                 faceDistance: faceDistance?.relative,
-                screenMetrics,
-                calibration: calibrationRef.current
+                screenMetrics
             }) : null;
 
             // Extract simple effectiveGaze for DetectionResult (for UI display)
@@ -424,12 +395,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
 
             await processViolations(result, irisGaze);
 
-            // ========================================
-            // PRE-SUSPICION DETECTION INTEGRATION
-            // Feed Kappa-corrected gaze data to pre-suspicion detector
-            // ========================================
             if (headPose && preSuspicion.processFrame) {
-                // Construct face box from BlazeFace or landmarks
                 let faceBox = null;
                 if (faces && faces.length > 0) {
                     const face = faces[0];
@@ -442,7 +408,6 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                         height: bottomRight[1] - topLeft[1]
                     };
                 } else if (landmarks && landmarks.length > 0) {
-                    // Fallback: estimate from landmarks
                     const xs = landmarks.map(l => l.x);
                     const ys = landmarks.map(l => l.y);
                     const minX = Math.min(...xs);
@@ -463,10 +428,9 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                         : false;
                     const brightness = faceQuality?.brightness || 128;
 
-                    // Call processFrame with Kappa-corrected irisGaze
                     preSuspicion.processFrame(
                         headPose,
-                        irisGaze,       // ← Now includes Kappa correction!
+                        irisGaze,
                         faceBox,
                         isBlinking,
                         brightness
@@ -475,37 +439,19 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
             }
 
             if (faceQuality && !faceQuality.isGoodQuality && Math.random() < 0.02) {
-                console.log(`[Detection] Face quality warnings (detection still running):`, faceQuality.warnings);
+                console.log(`[Detection] Face quality warnings(detection still running): `, faceQuality.warnings);
             }
 
             const currentRoomName = roomNameRef.current;
-            console.log(`[PreSuspicion CHECK] enablePreSuspicion=${enablePreSuspicion}, effectiveGaze=${!!effectiveGaze}, roomName=${currentRoomName}`);
+            console.log(`[PreSuspicion CHECK]enablePreSuspicion = ${enablePreSuspicion}, effectiveGaze = ${!!effectiveGaze}, roomName = ${currentRoomName} `);
 
             if (enablePreSuspicion && effectiveGaze && currentRoomName) {
-                // NOTE: Pre-suspicion detection is now handled by usePreSuspicionDetection hook
-                // which uses preSuspicionDetector.ts with improved multi-condition logic:
-                // - Multi-condition weighted scoring (pitch, gaze, distance, blink)
-                // - WINDOW_DURATION: 1.8s sustained
-                // - CONFIDENCE_THRESHOLD: 35 (see preSuspicionDetector.ts:117)
-                // - Escalation logic (2+ incidents → violation)
-                //
-                // The inline logic below was REMOVED to avoid duplication and conflicting thresholds.
-                // See preSuspicion object from usePreSuspicionDetection for status.
-
-                // Log effective gaze for debugging (throttled)
-                if (Math.random() < 0.05) {
-                    console.log(
-                        `[PreSuspicion:EffectiveGaze] ` +
-                        `pitch=${effectiveGaze.pitch.toFixed(1)}° yaw=${effectiveGaze.yaw.toFixed(1)}° ` +
-                        `isViolation=${effectiveGazeResult?.isViolation ?? 'N/A'} ` +
-                        `(handled by usePreSuspicionDetection hook)`
-                    );
-                }
+                // Pre-suspicion detection is handled by usePreSuspicionDetection hook
             }
 
             const elapsed = performance.now() - startTime;
             if (elapsed > 100) {
-                console.warn(`[Detection] Slow inference: ${elapsed.toFixed(1)}ms`);
+                console.warn(`[Detection] Slow inference: ${elapsed.toFixed(1)} ms`);
             }
 
         } catch (error) {
@@ -533,7 +479,6 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
             const lookingAway = isLookingAway(
                 result.headPose,
                 irisGaze,
-                calibrationRef.current,
                 faceDistanceRelative,
                 screenMetrics
             );
@@ -543,15 +488,13 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
             if (now - lastPoseLogRef.current > 5000) {
                 lastPoseLogRef.current = now;
                 const irisInfo = irisGaze
-                    ? ` iris_h=${irisGaze.horizontalGaze.toFixed(2)} iris_v=${irisGaze.verticalGaze.toFixed(2)}`
+                    ? ` iris_h = ${irisGaze.horizontalGaze.toFixed(2)} iris_v = ${irisGaze.verticalGaze.toFixed(2)} `
                     : ' (no iris)';
                 const distInfo = faceDistanceRelative
-                    ? ` dist=${faceDistanceRelative.toFixed(2)}x`
+                    ? ` dist = ${faceDistanceRelative.toFixed(2)} x`
                     : '';
-                const calibInfo = calibrationRef.current?.boundaries
-                    ? ` [calibrated: pitch=${calibrationRef.current.boundaries.minPitch}/${calibrationRef.current.boundaries.maxPitch}, yaw=${calibrationRef.current.boundaries.minYaw}/${calibrationRef.current.boundaries.maxYaw}]`
-                    : ' [default thresholds]';
-                console.log(`[Detection] HeadPose: pitch=${result.headPose.pitch.toFixed(1)}° yaw=${result.headPose.yaw.toFixed(1)}°${irisInfo}${distInfo}${calibInfo} → lookingAway=${lookingAway}`);
+                const calibInfo = ' [default thresholds]';
+                console.log(`[Detection] HeadPose: pitch = ${result.headPose.pitch.toFixed(1)}° yaw = ${result.headPose.yaw.toFixed(1)}°${irisInfo}${distInfo}${calibInfo} → lookingAway = ${lookingAway} `);
             }
 
             if (lookingAway) {
@@ -568,9 +511,9 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
 
                     if (now - lastLookAwayLogRef.current > 1000) {
                         const irisInfo = irisGaze
-                            ? ` iris_h=${irisGaze.horizontalGaze.toFixed(2)} iris_v=${irisGaze.verticalGaze.toFixed(2)}`
+                            ? ` iris_h = ${irisGaze.horizontalGaze.toFixed(2)} iris_v = ${irisGaze.verticalGaze.toFixed(2)} `
                             : '';
-                        console.warn(`[Detection] ⚠️ LOOK AWAY (${durationSeconds.toFixed(1)}s): pitch=${result.headPose.pitch.toFixed(1)}° yaw=${result.headPose.yaw.toFixed(1)}°${irisInfo}`);
+                        console.warn(`[Detection] ⚠️ LOOK AWAY(${durationSeconds.toFixed(1)}s): pitch = ${result.headPose.pitch.toFixed(1)}° yaw = ${result.headPose.yaw.toFixed(1)}°${irisInfo} `);
                         lastLookAwayLogRef.current = now;
                     }
                 }
@@ -637,7 +580,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                         uploadResult.url,
                         'snapshot'
                     );
-                    console.log(`[Evidence] ✅ Snapshot uploaded: ${uploadResult.url}`);
+                    console.log(`[Evidence] ✅ Snapshot uploaded: ${uploadResult.url} `);
                     if (onEvidenceUploaded) {
                         onEvidenceUploaded(violationType, uploadResult.url);
                     }
@@ -648,7 +591,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                     console.log(`[Evidence] Triggering Egress recording for ${violationType}`);
 
                     const requestedDuration = Math.ceil(
-                        (fullConfig.thresholds.clipPreBuffer + fullConfig.thresholds.clipPostBuffer) / 1000
+                        (fullConfig.thresholds.clipPreBuffer + fullConfig.thresholds.clipPostBuffer)
                     );
                     const egressDuration = Math.max(requestedDuration, 10);
 
@@ -660,10 +603,10 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                     });
 
                     if (egressResult.success && egressResult.egressId) {
-                        console.log(`[Evidence] ✅ Egress recording started: ${egressResult.egressId}`);
+                        console.log(`[Evidence] ✅ Egress recording started: ${egressResult.egressId} `);
                         stateMachineRef.current.onEvidenceUploaded(
                             violationType as SMViolationType,
-                            `egress:${egressResult.egressId}`,
+                            `egress:${egressResult.egressId} `,
                             'clip'
                         );
 
@@ -676,14 +619,14 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                                     violationType as IncidentType
                                 );
                                 if (snapshotResult.success) {
-                                    console.log(`[Evidence] ✅ Backup snapshot uploaded: ${snapshotResult.url}`);
+                                    console.log(`[Evidence] ✅ Backup snapshot uploaded: ${snapshotResult.url} `);
                                 }
                             } catch (snapshotErr) {
-                                console.warn(`[Evidence] Backup snapshot failed:`, snapshotErr);
+                                console.warn(`[Evidence] Backup snapshot failed: `, snapshotErr);
                             }
                         }
                     } else {
-                        console.warn(`[Evidence] Egress failed, falling back to local recording: ${egressResult.error}`);
+                        console.warn(`[Evidence] Egress failed, falling back to local recording: ${egressResult.error} `);
                         await collectLocalClip(violationType, result);
                     }
                 } else {
@@ -692,7 +635,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
             }
 
         } catch (error) {
-            console.error(`[Evidence] Failed to collect ${evidenceType}:`, error);
+            console.error(`[Evidence] Failed to collect ${evidenceType}: `, error);
         } finally {
             setUploading(false);
         }
@@ -713,7 +656,7 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                     fullConfig.thresholds.clipPostBuffer
                 );
             } catch (clipError) {
-                console.warn(`[Evidence] Local clip failed, falling back to snapshot:`, clipError);
+                console.warn(`[Evidence] Local clip failed, falling back to snapshot: `, clipError);
                 blob = await captureCanvasAsBlob(displayCanvasRef.current, 0.85);
             }
 
@@ -738,14 +681,14 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
                 'clip'
             );
 
-            console.log(`[Evidence] ✅ Local clip uploaded: ${publicUrl}`);
+            console.log(`[Evidence] ✅ Local clip uploaded: ${publicUrl} `);
 
             if (onEvidenceUploaded) {
                 onEvidenceUploaded(violationType, publicUrl);
             }
 
         } catch (error) {
-            console.error(`[Evidence] Local clip upload failed:`, error);
+            console.error(`[Evidence] Local clip upload failed: `, error);
         }
     }, [sessionId, createClip, fullConfig.thresholds, onEvidenceUploaded]);
 
@@ -770,6 +713,21 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
         return stateMachineRef.current?.getStats() || null;
     }, []);
 
+    const triggerLocalClip = useCallback(async (violationType: ViolationType) => {
+        const dummyResult: DetectionResult = {
+            faceCount: 1,
+            confidence: 100,
+            headPose: null,
+            eyeState: null,
+            irisGaze: null,
+            effectiveGaze: null,
+            faceDistance: null,
+            screenMetrics: null,
+            timestamp: Date.now()
+        };
+        await collectLocalClip(violationType, detectionResult || dummyResult);
+    }, [collectLocalClip, detectionResult]);
+
     return {
         // Refs
         videoRef,
@@ -785,20 +743,14 @@ export function useOptimizedDetection(options: UseOptimizedDetectionOptions) {
         bufferStatus,
 
         preSuspicion: {
-            isCalibrating: preSuspicion.isCalibrating,
-            calibrationProgress: preSuspicion.calibrationProgress,
-            calibrationValidation: preSuspicion.calibrationValidation,
-            hasBaseline: preSuspicion.hasBaseline,
-            // Using hook's detection result (correct property names)
             isActive: preSuspicion.preSuspicionActive,
             result: preSuspicion.preSuspicionResult,
             microBufferStatus: preSuspicion.microBufferStatus,
-            startCalibration: preSuspicion.startCalibration,
-            finishCalibration: preSuspicion.finishCalibration,
             temporal: preSuspicion.temporal
         },
 
         getStats,
+        triggerLocalClip,
 
         captureSnapshot: async () => {
             console.log('[captureSnapshot] Attempting to capture snapshot...');

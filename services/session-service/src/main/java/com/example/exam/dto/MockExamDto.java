@@ -41,6 +41,22 @@ public class MockExamDto {
             int durationMinutes
     ) {}
 
+    /**
+     * Paginated question response.
+     * Returned by {@code GET /mock/exams/{examId}/questions?page=0&size=20}.
+     */
+    public record GetQuestionsPagedResponse(
+            UUID examId,
+            String examName,
+            List<Question> questions,
+            int durationMinutes,
+            int currentPage,
+            int pageSize,
+            long totalElements,
+            int totalPages,
+            boolean hasNext
+    ) {}
+
     public record GetQuestionResponse(
             UUID examId,
             String examName,

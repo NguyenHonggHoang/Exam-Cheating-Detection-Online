@@ -33,7 +33,7 @@ public class IncidentService {
     private final SessionShadowRepository sessionShadowRepository;
 
     /**
-     * Find incidents with complex filtering
+     * Find incidents with complex filtering and tenant isolation
      * 
      * Uses shadow tables for cross-service data
      */
@@ -43,8 +43,36 @@ public class IncidentService {
             String examId,
             String severity,
             String status,
+            UUID userId,
+            boolean isStudent,
             Pageable pageable
     ) {
+        // Enforce STUDENT isolation
+        if (isStudent) {
+            if (sessionId != null) {
+                // Verify ownership
+                if (!sessionShadowRepository.isSessionOwnedByUser(sessionId, userId)) {
+                    throw new org.springframework.security.access.AccessDeniedException("You do not have permission to view incidents for this session.");
+                }
+            } else {
+                // If student doesn't provide a session, force query to only their sessions
+                List<UUID> ownedSessionIds = sessionShadowRepository.findSessionsByUser(userId)
+                    .stream().map(SessionShadowEntity::getSessionId).collect(Collectors.toList());
+                
+                if (ownedSessionIds.isEmpty()) return Page.empty(pageable);
+                
+                if (severity != null && status != null) {
+                    return incidentRepository.findBySessionIdInAndSeverityAndStatus(ownedSessionIds, severity, status, pageable);
+                } else if (severity != null) {
+                    return incidentRepository.findBySessionIdInAndSeverity(ownedSessionIds, severity, pageable);
+                } else if (status != null) {
+                    return incidentRepository.findBySessionIdInAndStatus(ownedSessionIds, status, pageable);
+                } else {
+                    return incidentRepository.findBySessionIdIn(ownedSessionIds, pageable);
+                }
+            }
+        }
+
         // Case 1: Filter by sessionId (direct query)
         if (sessionId != null) {
             if (severity != null && status != null) {
@@ -132,47 +160,79 @@ public class IncidentService {
     }
 
     /**
-     * Get incident summary statistics
+     * Get incident summary statistics.
+     *
+     * Uses dedicated count queries instead of loading all Incident entities
+     * into the heap — critical when a single exam session can generate
+     * thousands of incidents.
      */
     @Transactional(readOnly = true)
     public IncidentDto.SummaryResponse getSummary(String examId, UUID sessionId) {
-        List<Incident> incidents;
 
-        if (examId != null) {
-            // Get incidents for all sessions in this exam
-            List<UUID> sessionIds = sessionShadowRepository.findSessionsByExam(UUID.fromString(examId))
-                .stream()
-                .filter(s -> !s.getDeleted())
-                .map(SessionShadowEntity::getSessionId)
-                .collect(Collectors.toList());
-
-            incidents = incidentRepository.findBySessionIdIn(sessionIds);
-
-        } else if (sessionId != null) {
-            incidents = incidentRepository.findBySessionId(sessionId);
-
-        } else {
-            incidents = incidentRepository.findAll();
+        if (sessionId != null) {
+            // Fast path: single session — all counts in one DB round-trip each
+            return buildSummaryForSessions(List.of(sessionId));
         }
 
-        // Calculate statistics
-        long total = incidents.size();
-        long pending = incidents.stream().filter(i -> "PENDING".equals(i.getStatus())).count();
-        long reviewed = incidents.stream().filter(i -> "REVIEWED".equals(i.getStatus())).count();
-        long dismissed = incidents.stream().filter(i -> "DISMISSED".equals(i.getStatus())).count();
+        if (examId != null) {
+            List<UUID> sessionIds = sessionShadowRepository
+                    .findSessionsByExam(UUID.fromString(examId))
+                    .stream()
+                    .filter(s -> !s.getDeleted())
+                    .map(SessionShadowEntity::getSessionId)
+                    .collect(Collectors.toList());
 
-        long lowSeverity = incidents.stream().filter(i -> "LOW".equals(i.getSeverity())).count();
-        long mediumSeverity = incidents.stream().filter(i -> "MEDIUM".equals(i.getSeverity())).count();
-        long highSeverity = incidents.stream().filter(i -> "HIGH".equals(i.getSeverity())).count();
+            if (sessionIds.isEmpty()) {
+                return IncidentDto.SummaryResponse.builder()
+                        .totalIncidents(0L).pendingIncidents(0L)
+                        .reviewedIncidents(0L).dismissedIncidents(0L)
+                        .lowSeverityCount(0L).mediumSeverityCount(0L)
+                        .highSeverityCount(0L).build();
+            }
+            return buildSummaryForSessions(sessionIds);
+        }
+
+        // No filter: global summary — use global count queries, avoid findAll()
+        long total    = incidentRepository.count();
+        long pending  = incidentRepository.countByStatus("PENDING");
+        long reviewed = incidentRepository.countByStatus("REVIEWED");
+        long dismissed = incidentRepository.countByStatus("DISMISSED");
+        long low      = incidentRepository.countBySeverity("LOW");
+        long medium   = incidentRepository.countBySeverity("MEDIUM");
+        long high     = incidentRepository.countBySeverity("HIGH");
 
         return IncidentDto.SummaryResponse.builder()
-            .totalIncidents(total)
-            .pendingIncidents(pending)
-            .reviewedIncidents(reviewed)
-            .dismissedIncidents(dismissed)
-            .lowSeverityCount(lowSeverity)
-            .mediumSeverityCount(mediumSeverity)
-            .highSeverityCount(highSeverity)
-            .build();
+                .totalIncidents(total)
+                .pendingIncidents(pending)
+                .reviewedIncidents(reviewed)
+                .dismissedIncidents(dismissed)
+                .lowSeverityCount(low)
+                .mediumSeverityCount(medium)
+                .highSeverityCount(high)
+                .build();
+    }
+
+    /**
+     * Build a summary DTO using count queries scoped to specific session IDs.
+     * Avoids loading any Incident entities; only COUNT(*) queries hit the DB.
+     */
+    private IncidentDto.SummaryResponse buildSummaryForSessions(List<UUID> sessionIds) {
+        long total     = incidentRepository.countBySessionIdIn(sessionIds);
+        long pending   = incidentRepository.countBySessionIdInAndStatus(sessionIds, "PENDING");
+        long reviewed  = incidentRepository.countBySessionIdInAndStatus(sessionIds, "REVIEWED");
+        long dismissed = incidentRepository.countBySessionIdInAndStatus(sessionIds, "DISMISSED");
+        long low       = incidentRepository.countBySessionIdInAndSeverity(sessionIds, "LOW");
+        long medium    = incidentRepository.countBySessionIdInAndSeverity(sessionIds, "MEDIUM");
+        long high      = incidentRepository.countBySessionIdInAndSeverity(sessionIds, "HIGH");
+
+        return IncidentDto.SummaryResponse.builder()
+                .totalIncidents(total)
+                .pendingIncidents(pending)
+                .reviewedIncidents(reviewed)
+                .dismissedIncidents(dismissed)
+                .lowSeverityCount(low)
+                .mediumSeverityCount(medium)
+                .highSeverityCount(high)
+                .build();
     }
 }

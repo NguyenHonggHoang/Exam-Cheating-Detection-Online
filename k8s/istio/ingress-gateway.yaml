@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: exam-platform-gateway
+  namespace: exam-platform
+spec:
+  selector:
+    istio: ingressgateway # Uses the default istio-ingressgateway in istio-system
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: bff-gateway-route
+  namespace: exam-platform
+spec:
+  hosts:
+    - "*"
+  gateways:
+    - exam-platform-gateway
+  http:
+    - route:
+        - destination:
+            host: bff-gateway.exam-platform.svc.cluster.local
+            port:
+              number: 8080

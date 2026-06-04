@@ -65,11 +65,6 @@ public class IdentityVerificationService {
         this.objectMapper = objectMapper;
     }
     
-    // ========== Student ID Photo Management ==========
-    
-    /**
-     * Upload student ID photo
-     */
     @Transactional
     public StudentIdentityPhoto uploadIdPhoto(
             String userId,
@@ -80,12 +75,10 @@ public class IdentityVerificationService {
         
         log.info("Uploading ID photo for user: {}", userId);
         
-        // Check if user already has ID photo
         Optional<StudentIdentityPhoto> existing = photoRepository.findByUserId(userId);
         
         StudentIdentityPhoto photo;
         if (existing.isPresent()) {
-            // Update existing
             photo = existing.get();
             photo.setObjectKey(objectKey);
             photo.setOriginalFilename(originalFilename);
@@ -96,7 +89,6 @@ public class IdentityVerificationService {
             photo.setVerifiedBy(null);
             photo.setRejectionReason(null);
         } else {
-            // Create new
             photo = new StudentIdentityPhoto();
             photo.setUserId(userId);
             photo.setObjectKey(objectKey);
@@ -107,37 +99,24 @@ public class IdentityVerificationService {
         
         photo = photoRepository.save(photo);
         
-        // Request face embedding extraction (async via RabbitMQ)
         requestEmbeddingExtraction(userId, getPhotoUrl(objectKey), photo.getId());
         
         log.info("ID photo uploaded: {}", photo.getId());
         return photo;
     }
     
-    /**
-     * Get student ID photo by user
-     */
     public Optional<StudentIdentityPhoto> getIdPhoto(String userId) {
         return photoRepository.findByUserId(userId);
     }
     
-    /**
-     * Check if user has ID photo uploaded
-     */
     public boolean hasIdPhoto(String userId) {
         return photoRepository.existsByUserId(userId);
     }
     
-    /**
-     * Get student ID photo by photo ID
-     */
     public Optional<StudentIdentityPhoto> getIdPhotoById(UUID photoId) {
         return photoRepository.findById(photoId);
     }
     
-    /**
-     * Admin: Verify student ID photo
-     */
     @Transactional
     public StudentIdentityPhoto verifyIdPhoto(UUID photoId, String adminId, boolean approved, String reason) {
         StudentIdentityPhoto photo = photoRepository.findById(photoId)
@@ -158,20 +137,9 @@ public class IdentityVerificationService {
         return photoRepository.save(photo);
     }
     
-    // ========== Face Verification ==========
-    
-    /**
-     * Request identity verification for exam session
-     * 
-     * @param sessionId Exam session ID
-     * @param userId User ID
-     * @param probeObjectKey MinIO key for exam snapshot
-     * @return Request ID
-     */
     public String requestVerification(UUID sessionId, String userId, String probeObjectKey) {
         log.info("Requesting identity verification: session={}, user={}", sessionId, userId);
         
-        // Get reference photo (student ID)
         StudentIdentityPhoto idPhoto = photoRepository.findByUserId(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Student ID photo not found for user: " + userId));
         
@@ -183,7 +151,6 @@ public class IdentityVerificationService {
         String referenceUrl = getPhotoUrl(idPhoto.getObjectKey());
         String probeUrl = getPhotoUrl(probeObjectKey);
         
-        // Send verification request to AI worker
         Map<String, Object> message = Map.of(
                 "requestId", requestId,
                 "sessionId", sessionId.toString(),
@@ -194,7 +161,6 @@ public class IdentityVerificationService {
         );
         
         try {
-            // Send Map directly - RabbitTemplate's Jackson converter will serialize it
             rabbitTemplate.convertAndSend(
                     RabbitMQConfig.EXCHANGE_NAME,
                     RabbitMQConfig.FACE_VERIFICATION_ROUTING_KEY,
@@ -208,22 +174,16 @@ public class IdentityVerificationService {
         return requestId;
     }
     
-    /**
-     * Verify synchronously (for immediate result)
-     * Uses HTTP call to Python AI service
-     */
     @Transactional
     public IdentityVerification verifySync(UUID sessionId, String userId, String probeObjectKey) {
         log.info("Synchronous identity verification: session={}, user={}", sessionId, userId);
         
-        // Get reference photo
         StudentIdentityPhoto idPhoto = photoRepository.findByUserId(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Student ID photo not found for user: " + userId));
         
         String referenceUrl = getPhotoUrl(idPhoto.getObjectKey());
         String probeUrl = getPhotoUrl(probeObjectKey);
         
-        // For now, create placeholder - actual verification via RabbitMQ
         IdentityVerification verification = new IdentityVerification();
         verification.setSessionId(sessionId);
         verification.setUserId(userId);
@@ -231,7 +191,6 @@ public class IdentityVerificationService {
         verification.setProbeUrl(probeUrl);
         verification.setProbeObjectKey(probeObjectKey);
         
-        // Will be updated when result comes back
         verification.setVerified(false);
         verification.setConfidence(0.0);
         verification.setSimilarity(0.0);
@@ -243,10 +202,6 @@ public class IdentityVerificationService {
         return verificationRepository.save(verification);
     }
     
-    /**
-     * Handle verification result from AI worker
-     * Receives JSON object which Jackson converts to Map
-     */
     @RabbitListener(queues = RabbitMQConfig.FACE_VERIFICATION_RESULT_QUEUE)
     @Transactional
     public void handleVerificationResult(Map<String, Object> result) {
@@ -286,24 +241,15 @@ public class IdentityVerificationService {
         }
     }
     
-    /**
-     * Get verification history for session
-     */
     public java.util.List<IdentityVerification> getSessionVerifications(UUID sessionId) {
         return verificationRepository.findBySessionId(sessionId);
     }
     
-    /**
-     * Get latest verification for session
-     */
     public Optional<IdentityVerification> getLatestVerification(UUID sessionId) {
         return verificationRepository.findTopBySessionIdOrderByVerifiedAtDesc(sessionId);
     }
     
-    // ========== Helpers ==========
-    
     private String getPhotoUrl(String objectKey) {
-        // Determine bucket based on objectKey path
         String bucket = determineBucket(objectKey);
         return minioPublicUrl + "/" + bucket + "/" + objectKey;
     }
@@ -311,20 +257,16 @@ public class IdentityVerificationService {
     private String determineBucket(String objectKey) {
         if (objectKey == null) return evidenceBucket;
         
-        // ID photos and identity-related files go to identity bucket
-        // Pattern: {userId}/id-photo-xxx.jpg or {userId}/id-card_xxx.jpg
         if (objectKey.contains("/id-photo") || 
             objectKey.contains("/id-card") ||
             objectKey.contains("/live-photo")) {
             return identityBucket;
         }
         
-        // Default to evidence bucket for snapshots and other files
         return evidenceBucket;
     }
     
     private void requestEmbeddingExtraction(String userId, String photoUrl, UUID sourceId) {
-        // Queue embedding extraction request
         Map<String, Object> message = Map.of(
                 "userId", userId,
                 "photoUrl", photoUrl,

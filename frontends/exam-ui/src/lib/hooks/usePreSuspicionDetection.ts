@@ -1,31 +1,9 @@
-/**
- * Pre-Suspicion Detection Hook
- * 
- * Integrates pre-suspicion detection with the main detection flow.
- * Monitors for phone-prep patterns and triggers micro-buffer recording.
- * Now includes temporal pattern analysis for repeated behaviors.
- * 
- * Usage:
- * const { preSuspicionResult, microBufferStatus, calibrationProgress, temporalRiskScore } = usePreSuspicionDetection({
- *   sessionId,
- *   stream,
- *   enabled,
- *   headPose,
- *   irisGaze,
- *   faceBox,
- *   isBlinking
- * });
- */
-
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { HeadPose } from '../types/detection';
 import { IrisGaze } from '../utils/faceAnalysis';
 import {
-    CalibrationCollector,
     PreSuspicionDetector,
-    PreSuspicionResult,
-    BaselineData,
-    CalibrationValidation
+    PreSuspicionResult
 } from '../utils/preSuspicionDetector';
 import {
     MicroBuffer,
@@ -46,10 +24,6 @@ export interface UsePreSuspicionOptions {
 }
 
 export interface PreSuspicionState {
-    isCalibrating: boolean;
-    calibrationProgress: number;
-    calibrationValidation: CalibrationValidation | null;
-    hasBaseline: boolean;
     preSuspicionActive: boolean;
     preSuspicionResult: PreSuspicionResult | null;
     microBufferStatus: MicroBufferStatus;
@@ -77,7 +51,6 @@ export function usePreSuspicionDetection(options: UsePreSuspicionOptions) {
     });
 
     // Refs
-    const calibrationCollectorRef = useRef<CalibrationCollector | null>(null);
     const preSuspicionDetectorRef = useRef<PreSuspicionDetector | null>(null);
     const microBufferRef = useRef<MicroBuffer | null>(null);
     const uploadingRef = useRef(false);
@@ -95,10 +68,6 @@ export function usePreSuspicionDetection(options: UsePreSuspicionOptions) {
 
     // State
     const [state, setState] = useState<PreSuspicionState>({
-        isCalibrating: false,
-        calibrationProgress: 0,
-        calibrationValidation: null,
-        hasBaseline: false,
         preSuspicionActive: false,
         preSuspicionResult: null,
         microBufferStatus: {
@@ -112,25 +81,11 @@ export function usePreSuspicionDetection(options: UsePreSuspicionOptions) {
 
     // Initialize components
     useEffect(() => {
-        calibrationCollectorRef.current = new CalibrationCollector();
         preSuspicionDetectorRef.current = new PreSuspicionDetector();
         microBufferRef.current = new MicroBuffer({
             maxDurationMs: 5000,
             chunkDurationMs: 500
         });
-
-        // Check for existing baseline in sessionStorage
-        const savedBaseline = sessionStorage.getItem(`pre_suspicion_baseline_${sessionId}`);
-        if (savedBaseline) {
-            try {
-                const baseline = JSON.parse(savedBaseline) as BaselineData;
-                preSuspicionDetectorRef.current.setBaseline(baseline);
-                setState(s => ({ ...s, hasBaseline: true }));
-                console.log('[PreSuspicion] Loaded saved baseline');
-            } catch (e) {
-                console.warn('[PreSuspicion] Failed to load saved baseline');
-            }
-        }
 
         return () => {
             microBufferRef.current?.stop();
@@ -155,58 +110,6 @@ export function usePreSuspicionDetection(options: UsePreSuspicionOptions) {
             return next;
         });
     }, []);
-
-    /**
-     * Start calibration
-     */
-    const startCalibration = useCallback(() => {
-        calibrationCollectorRef.current = new CalibrationCollector();
-        preSuspicionDetectorRef.current = new PreSuspicionDetector();
-        microBufferRef.current = new MicroBuffer();
-
-        updateState(s => ({
-            ...s,
-            isCalibrating: true,
-            calibrationProgress: 0,
-            hasBaseline: false
-        }));
-
-        console.log('[PreSuspicion] Calibration started');
-    }, []); // Removed updateState dependency as it's stable
-
-    /**
-     * Stop calibration and calculate baseline
-     */
-    const finishCalibration = useCallback(() => {
-        if (!calibrationCollectorRef.current || !preSuspicionDetectorRef.current) return false;
-
-        calibrationCollectorRef.current.stop();
-        const baseline = calibrationCollectorRef.current.calculateBaseline();
-
-        if (baseline) {
-            preSuspicionDetectorRef.current.setBaseline(baseline);
-
-            // Save to sessionStorage
-            sessionStorage.setItem(
-                `pre_suspicion_baseline_${sessionId}`,
-                JSON.stringify(baseline)
-            );
-
-            updateState(s => ({
-                ...s,
-                isCalibrating: false,
-                hasBaseline: true,
-                calibrationProgress: 100
-            }));
-
-            console.log('[PreSuspicion] Calibration complete:', baseline);
-            return true;
-        }
-
-        updateState(s => ({ ...s, isCalibrating: false }));
-        console.warn('[PreSuspicion] Calibration failed - not enough samples');
-        return false;
-    }, [sessionId]); // Removed updateState
 
     /**
      * Upload micro-buffer video to backend for analysis
@@ -289,35 +192,8 @@ export function usePreSuspicionDetection(options: UsePreSuspicionOptions) {
             return;
         }
 
-        const collector = calibrationCollectorRef.current;
         const detector = preSuspicionDetectorRef.current;
         const microBuffer = microBufferRef.current;
-
-        // During calibration: collect samples and validate
-        if (currentState.isCalibrating && collector) {
-            // Real-time validation
-            const validation = collector.validateRealtime(headPose, faceBox, brightness);
-
-            // Only add sample if validation passes
-            if (validation.valid) {
-                collector.addSample(headPose, irisGaze, faceBox, brightness, isBlinking);
-            }
-
-            const progress = collector.getProgress();
-
-            updateState(s => ({
-                ...s,
-                calibrationProgress: progress,
-                calibrationValidation: validation
-            }));
-
-            // Auto-complete calibration when done
-            if (collector.isComplete()) {
-                finishCalibration();
-            }
-
-            return;
-        }
 
         // After calibration: detect pre-suspicion patterns
         if (detector) {
@@ -424,7 +300,6 @@ export function usePreSuspicionDetection(options: UsePreSuspicionOptions) {
         // Removed state.* deps to ensure stable function identity
         // Only depend on refs and stable callbacks
         stream,
-        finishCalibration,
         onPreSuspicionTriggered,
         uploadMicroBuffer // uploadMicroBuffer is stable-ish (depends on uploadingRef)
     ]);
@@ -470,14 +345,9 @@ export function usePreSuspicionDetection(options: UsePreSuspicionOptions) {
         },
 
         // Actions
-        startCalibration,
-        finishCalibration,
         processFrame,
         uploadMicroBuffer,
-        reset,
-
-        // Utilities
-        getBaseline: () => preSuspicionDetectorRef.current?.getBaseline() ?? null
+        reset
     };
 }
 

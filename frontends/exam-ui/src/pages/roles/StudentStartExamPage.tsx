@@ -86,8 +86,12 @@ export const StudentStartExamPage = () => {
       setStarting(true);
       setError(null);
 
-      // Proceed to Face Verification
-      navigate(`/exam/${exam.id}/verify`);
+      // Proceed to Face Verification if configured by admin, otherwise go straight to the exam room
+      if (exam.requireIdVerification) {
+        navigate(`/exam/${exam.id}/verify`);
+      } else {
+        navigate(`/exam-start/${exam.id}`);
+      }
     } catch (err) {
       console.error('Error starting exam:', err);
       setError('Không thể bắt đầu kỳ thi. Vui lòng thử lại sau.');

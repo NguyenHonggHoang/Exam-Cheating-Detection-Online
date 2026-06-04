@@ -10,10 +10,12 @@ spring:
     username: ${UMS_DB_USERNAME:postgres}
     password: ${UMS_DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 100
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
@@ -30,7 +32,16 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://tempo-service:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
 
 logging:
   level:

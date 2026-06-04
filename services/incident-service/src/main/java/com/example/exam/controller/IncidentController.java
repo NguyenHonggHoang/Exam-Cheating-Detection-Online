@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import lombok.Data;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -19,6 +20,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
+import java.util.List;
+import java.util.Map;
+import java.util.Base64;
+import java.util.HashMap;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * Incident Management Controller - Incident Service
@@ -50,6 +58,8 @@ public class IncidentController {
      */
     @GetMapping
     @Operation(summary = "List incidents with filtering and pagination")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('PROCTOR', 'ADMIN', 'STUDENT')")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<Page<IncidentDto.Response>> listIncidents(
             @RequestParam(value = "sessionId", required = false) UUID sessionId,
             @RequestParam(value = "examId", required = false) String examId,
@@ -57,7 +67,8 @@ public class IncidentController {
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "20") int size,
-            @RequestParam(value = "sort", defaultValue = "detectedAt,desc") String sort
+            @RequestParam(value = "sort", defaultValue = "detectedAt,desc") String sort,
+            org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken auth
     ) {
         // Parse sort parameter
         String[] sortParts = sort.split(",");
@@ -68,9 +79,15 @@ public class IncidentController {
         
         Pageable pageable = PageRequest.of(page, size, Sort.by(dir, sortProp));
         
+        boolean isStudent = auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_STUDENT"));
+        UUID userId = null;
+        if (isStudent) {
+            userId = UUID.fromString(auth.getToken().getSubject());
+        }
+
         // Delegate to service for complex filtering
         Page<Incident> incidents = incidentService.findIncidents(
-            sessionId, examId, severity, status, pageable
+            sessionId, examId, severity, status, userId, isStudent, pageable
         );
         
         return ResponseEntity.ok(incidents.map(IncidentDto.Response::from));
@@ -81,9 +98,21 @@ public class IncidentController {
      */
     @GetMapping("/{id}")
     @Operation(summary = "Get incident details by ID")
-    public ResponseEntity<IncidentDto.DetailedResponse> getIncident(@PathVariable UUID id) {
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('PROCTOR', 'ADMIN', 'STUDENT')")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public ResponseEntity<IncidentDto.DetailedResponse> getIncident(
+            @PathVariable UUID id,
+            org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken auth
+    ) {
         return incidentRepository.findById(id)
             .map(incident -> {
+                // Check STUDENT ownership
+                boolean isStudent = auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_STUDENT"));
+                UUID userId = UUID.fromString(auth.getToken().getSubject());
+                if (isStudent && !sessionShadowRepository.isSessionOwnedByUser(incident.getSessionId(), userId)) {
+                    throw new org.springframework.security.access.AccessDeniedException("Access Denied");
+                }
+
                 // Enrich with shadow data
                 var detailed = IncidentDto.DetailedResponse.from(incident);
                 
@@ -106,6 +135,7 @@ public class IncidentController {
      */
     @PatchMapping("/{id}/status")
     @Operation(summary = "Update incident status")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAuthority('incident.write')")
     public ResponseEntity<IncidentDto.Response> updateStatus(
             @PathVariable UUID id,
             @RequestBody IncidentDto.UpdateStatusRequest request
@@ -121,10 +151,27 @@ public class IncidentController {
      */
     @GetMapping("/summary")
     @Operation(summary = "Get incident summary statistics")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('PROCTOR', 'ADMIN', 'STUDENT')")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<IncidentDto.SummaryResponse> getSummary(
             @RequestParam(value = "examId", required = false) String examId,
-            @RequestParam(value = "sessionId", required = false) UUID sessionId
+            @RequestParam(value = "sessionId", required = false) UUID sessionId,
+            org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken auth
     ) {
+        boolean isStudent = auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_STUDENT"));
+        if (isStudent) {
+            UUID userId = UUID.fromString(auth.getToken().getSubject());
+            if (sessionId != null) {
+                if (!sessionShadowRepository.isSessionOwnedByUser(sessionId, userId)) {
+                    throw new org.springframework.security.access.AccessDeniedException("Access Denied");
+                }
+            } else {
+                // If no sessionId is provided by student, we shouldn't really allow summarizing the entire system.
+                // We should enforce providing their own sessionId.
+                throw new org.springframework.security.access.AccessDeniedException("Student must provide sessionId");
+            }
+        }
+
         IncidentDto.SummaryResponse summary = incidentService.getSummary(examId, sessionId);
         return ResponseEntity.ok(summary);
     }
@@ -137,6 +184,7 @@ public class IncidentController {
      */
     @GetMapping("/{id}/evidence")
     @Operation(summary = "Get incident evidence (image or video)")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public ResponseEntity<byte[]> getEvidence(@PathVariable UUID id) {
         var optIncident = incidentRepository.findById(id);
         
@@ -199,5 +247,80 @@ public class IncidentController {
         
         // Default
         return "application/octet-stream";
+    }
+
+    @Data
+    public static class BatchCreateRequest {
+        private UUID sessionId;
+        private String type;
+        private String severity;
+        private String evidenceUrl;
+        private String objectKey;
+        private String detectedBy;
+    }
+
+    @PostMapping("/batch/evidence")
+    @Operation(summary = "Upload batch incidents")
+    public Mono<ResponseEntity<List<IncidentDto.Response>>> uploadEvidenceBatch(
+            @Valid @RequestBody List<BatchCreateRequest> requests
+    ) {
+        return Flux.fromIterable(requests)
+                .parallel()
+                .runOn(Schedulers.boundedElastic())
+                .map(req -> {
+                    Incident incident = new Incident();
+                    incident.setId(UUID.randomUUID());
+                    incident.setSessionId(req.getSessionId());
+                    incident.setType(req.getType());
+                    incident.setSeverity(req.getSeverity() != null ? req.getSeverity() : "MEDIUM");
+                    incident.setEvidenceUrl(req.getEvidenceUrl());
+                    incident.setObjectKey(req.getObjectKey() != null ? req.getObjectKey() : req.getEvidenceUrl());
+                    incident.setStatus("PENDING");
+                    incident.setDetectedBy(req.getDetectedBy() != null ? req.getDetectedBy() : "MANUAL_UPLOAD");
+                    incident.setDetectedAt(java.time.Instant.now());
+                    incident.setCreatedAt(java.time.Instant.now());
+                    return incidentRepository.save(incident);
+                })
+                .sequential()
+                .collectList()
+                .map(list -> ResponseEntity.ok(list.stream().map(IncidentDto.Response::from).toList()));
+    }
+
+    @PostMapping("/batch/load-evidence")
+    @Operation(summary = "Load batch incident evidence files as Base64")
+    public Mono<ResponseEntity<Map<String, String>>> loadEvidenceBatch(
+            @RequestBody List<UUID> incidentIds
+    ) {
+        return Flux.fromIterable(incidentIds)
+                .parallel()
+                .runOn(Schedulers.boundedElastic())
+                .flatMap(id -> {
+                    return Mono.fromCallable(() -> {
+                        var optIncident = incidentRepository.findById(id);
+                        if (optIncident.isPresent()) {
+                            var incident = optIncident.get();
+                            if (incident.getObjectKey() != null && !incident.getObjectKey().isEmpty()) {
+                                try (var inputStream = minioStorageService.getFileStream(incident.getObjectKey())) {
+                                    byte[] fileBytes = inputStream.readAllBytes();
+                                    String base64Data = Base64.getEncoder().encodeToString(fileBytes);
+                                    String contentType = detectContentType(incident.getObjectKey());
+                                    return Map.entry(id.toString(), "data:" + contentType + ";base64," + base64Data);
+                                }
+                            }
+                        }
+                        return Map.entry(id.toString(), "");
+                    }).onErrorReturn(Map.entry(id.toString(), ""));
+                })
+                .sequential()
+                .collectList()
+                .map(entries -> {
+                    Map<String, String> resultMap = new HashMap<>();
+                    for (var entry : entries) {
+                        if (!entry.getValue().isEmpty()) {
+                            resultMap.put(entry.getKey(), entry.getValue());
+                        }
+                    }
+                    return ResponseEntity.ok(resultMap);
+                });
     }
 }

@@ -37,9 +37,12 @@ export const ProctorDashboard = () => {
     const [starting, setStarting] = useState(false);
     const [examStarted, setExamStarted] = useState(false);
 
-    // Filters
+    // Filters & Pagination
     const [statusFilter, setStatusFilter] = useState<string>('');
     const [severityFilter, setSeverityFilter] = useState<string>('');
+    const [selectedSessionFilter, setSelectedSessionFilter] = useState<string>('');
+    const [page, setPage] = useState<number>(0);
+    const [hasMore, setHasMore] = useState<boolean>(true);
     const [expandedSession, setExpandedSession] = useState<string | null>(null);
 
     // View mode: 'cameras' | 'incidents' | 'verifications'
@@ -138,14 +141,13 @@ export const ProctorDashboard = () => {
     });
 
     // Load data
-    const loadData = useCallback(async () => {
+    const loadData = useCallback(async (targetPage = 0, isLoadMore = false) => {
         if (!examId) return;
 
         setLoading(true);
         setError(null);
 
         try {
-            // Load sessions for exam
             // Load sessions for exam (ACTIVE only first, then fallback)
             let sessionsData = await sessionsApi.getByExam(examId);
 
@@ -159,7 +161,7 @@ export const ProctorDashboard = () => {
                         const data = await queueResponse.json();
                         // Map queue members to session-like objects
                         const memberSessions: Session[] = (data.members || []).map((member: any) => ({
-                            id: member.id || member.userId, // Use userId as ID for queue members
+                            id: member.id || member.userId,
                             examId: examId,
                             userId: member.userId,
                             status: 'WAITING' as any,
@@ -180,14 +182,31 @@ export const ProctorDashboard = () => {
             const summaryData = await incidentsApi.getSummary({ examId });
             setSummary(summaryData);
 
-            // Load incidents with filters
+            // Load incidents with filters & pagination
+            const size = 50;
             const incidentsData = await incidentsApi.list({
                 examId,
+                sessionId: selectedSessionFilter || undefined,
                 status: statusFilter as any || undefined,
                 severity: severityFilter as any || undefined,
-                size: 50
+                page: targetPage,
+                size: size
             });
-            setIncidents(incidentsData.content);
+
+            if (isLoadMore) {
+                setIncidents(prev => {
+                    const combined = [...prev, ...incidentsData.content];
+                    // De-duplicate
+                    const unique = combined.filter((item, index, self) =>
+                        index === self.findIndex((t) => t.id === item.id)
+                    );
+                    return unique;
+                });
+            } else {
+                setIncidents(incidentsData.content);
+            }
+
+            setHasMore(incidentsData.content.length === size);
 
         } catch (err) {
             console.error('Error loading dashboard:', err);
@@ -195,15 +214,28 @@ export const ProctorDashboard = () => {
         } finally {
             setLoading(false);
         }
-    }, [examId, statusFilter, severityFilter]);
+    }, [examId, statusFilter, severityFilter, selectedSessionFilter]);
 
+    // Handle filter changes and page resets
     useEffect(() => {
-        loadData();
+        setPage(0);
+        loadData(0, false);
+    }, [statusFilter, severityFilter, selectedSessionFilter, loadData]);
 
-        // Auto-refresh every 30 seconds
-        const interval = setInterval(loadData, 30000);
+    // Auto-refresh interval (only fetches first page silently)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            loadData(0, false);
+            setPage(0);
+        }, 30000);
         return () => clearInterval(interval);
     }, [loadData]);
+
+    const handleLoadMore = () => {
+        const nextPage = page + 1;
+        setPage(nextPage);
+        loadData(nextPage, true);
+    };
 
     // Load reviews for selected incident
     useEffect(() => {
@@ -318,7 +350,7 @@ export const ProctorDashboard = () => {
                                 </button>
                             </div>
 
-                            <Button onClick={loadData} variant="outline" disabled={loading}>
+                            <Button onClick={() => loadData(0, false)} variant="outline" disabled={loading}>
                                 <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                                 Refresh
                             </Button>
@@ -492,6 +524,19 @@ export const ProctorDashboard = () => {
                                 <option value="MEDIUM">Medium</option>
                                 <option value="HIGH">High</option>
                             </select>
+
+                            <select
+                                value={selectedSessionFilter}
+                                onChange={(e) => setSelectedSessionFilter(e.target.value)}
+                                className="border rounded px-3 py-2 max-w-xs"
+                            >
+                                <option value="">All Students / Sessions</option>
+                                {sessions.map(s => (
+                                    <option key={s.id} value={s.id}>
+                                        Student: {s.userId.substring(0, 8)}... (Session: {s.id.substring(0, 8)}...)
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                     </CardContent>
                 </Card>
@@ -612,6 +657,20 @@ export const ProctorDashboard = () => {
                                                 </div>
                                             );
                                         })}
+                                    </div>
+                                )}
+
+                                {hasMore && incidents.length > 0 && (
+                                    <div className="mt-4 flex justify-center">
+                                        <Button
+                                            onClick={handleLoadMore}
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={loading}
+                                            className="w-full"
+                                        >
+                                            {loading ? 'Loading...' : 'Load More Incidents'}
+                                        </Button>
                                     </div>
                                 )}
                             </CardContent>

@@ -42,6 +42,18 @@ public interface SessionShadowRepository extends JpaRepository<SessionShadowEnti
     boolean isSessionActive(UUID sessionId);
 
     /**
+     * Find all sessions for a user (regardless of status, to see past incidents)
+     */
+    @Query("SELECT s FROM SessionShadowEntity s WHERE s.userId = ?1 AND s.deleted = false")
+    List<SessionShadowEntity> findSessionsByUser(UUID userId);
+
+    /**
+     * Check if a session belongs to a user
+     */
+    @Query("SELECT CASE WHEN COUNT(s) > 0 THEN true ELSE false END FROM SessionShadowEntity s WHERE s.sessionId = ?1 AND s.userId = ?2 AND s.deleted = false")
+    boolean isSessionOwnedByUser(UUID sessionId, UUID userId);
+
+    /**
      * Find ended sessions (for cleanup)
      */
     @Query("SELECT s FROM SessionShadowEntity s WHERE s.status IN ('ENDED', 'ABORTED') AND s.deleted = false")

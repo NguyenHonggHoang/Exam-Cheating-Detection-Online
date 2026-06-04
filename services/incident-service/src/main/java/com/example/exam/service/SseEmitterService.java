@@ -28,6 +28,9 @@ public class SseEmitterService {
     // All active connections (proctor ID -> emitter)
     private final Map<String, SseEmitter> allEmitters = new ConcurrentHashMap<>();
     
+    // Use a fixed thread pool with bounded threads to prevent thread explosion under extreme load
+    private final java.util.concurrent.ExecutorService sseExecutor = java.util.concurrent.Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 2);
+    
     // Connections by exam (examId -> list of emitters)
     private final Map<String, List<SseEmitter>> examEmitters = new ConcurrentHashMap<>();
     
@@ -108,59 +111,63 @@ public class SseEmitterService {
      * @param incident The incident DTO to broadcast
      */
     public void broadcastIncident(IncidentDto.Response incident) {
-        log.info("Broadcasting incident {} to {} proctors", incident.getId(), allEmitters.size());
-        
-        allEmitters.forEach((proctorId, emitter) -> {
-            try {
-                emitter.send(SseEmitter.event()
-                        .name("new-incident")
-                        .data(incident));
-                log.debug("Sent incident {} to proctor {}", incident.getId(), proctorId);
-            } catch (IOException e) {
-                log.warn("Failed to send to proctor {}, removing emitter", proctorId);
-                removeEmitter(proctorId);
-            }
-        });
-        
-        // Also broadcast to exam-specific subscribers
-        String examId = incident.getExamId();
-        if (examId != null && examEmitters.containsKey(examId)) {
-            List<SseEmitter> emitters = examEmitters.get(examId);
-            List<SseEmitter> deadEmitters = new CopyOnWriteArrayList<>();
+        sseExecutor.submit(() -> {
+            log.info("Broadcasting incident {} to {} proctors asynchronously", incident.getId(), allEmitters.size());
             
-            emitters.forEach(emitter -> {
+            allEmitters.forEach((proctorId, emitter) -> {
                 try {
                     emitter.send(SseEmitter.event()
                             .name("new-incident")
                             .data(incident));
+                    log.debug("Sent incident {} to proctor {}", incident.getId(), proctorId);
                 } catch (IOException e) {
-                    deadEmitters.add(emitter);
+                    log.warn("Failed to send to proctor {}, removing emitter", proctorId);
+                    removeEmitter(proctorId);
                 }
             });
             
-            // Clean up dead connections
-            emitters.removeAll(deadEmitters);
-        }
+            // Also broadcast to exam-specific subscribers
+            String examId = incident.getExamId();
+            if (examId != null && examEmitters.containsKey(examId)) {
+                List<SseEmitter> emitters = examEmitters.get(examId);
+                List<SseEmitter> deadEmitters = new CopyOnWriteArrayList<>();
+                
+                emitters.forEach(emitter -> {
+                    try {
+                        emitter.send(SseEmitter.event()
+                                .name("new-incident")
+                                .data(incident));
+                    } catch (IOException e) {
+                        deadEmitters.add(emitter);
+                    }
+                });
+                
+                // Clean up dead connections
+                emitters.removeAll(deadEmitters);
+            }
+        });
     }
 
     /**
      * Broadcast incident status update
      */
     public void broadcastStatusUpdate(UUID incidentId, String newStatus) {
-        log.info("Broadcasting status update {} -> {} to {} proctors", 
-                incidentId, newStatus, allEmitters.size());
-        
-        String data = String.format("{\"incidentId\":\"%s\",\"status\":\"%s\",\"timestamp\":%d}",
-                incidentId, newStatus, System.currentTimeMillis());
-        
-        allEmitters.forEach((proctorId, emitter) -> {
-            try {
-                emitter.send(SseEmitter.event()
-                        .name("status-update")
-                        .data(data));
-            } catch (IOException e) {
-                removeEmitter(proctorId);
-            }
+        sseExecutor.submit(() -> {
+            log.info("Broadcasting status update {} -> {} to {} proctors asynchronously", 
+                    incidentId, newStatus, allEmitters.size());
+            
+            String data = String.format("{\"incidentId\":\"%s\",\"status\":\"%s\",\"timestamp\":%d}",
+                    incidentId, newStatus, System.currentTimeMillis());
+            
+            allEmitters.forEach((proctorId, emitter) -> {
+                try {
+                    emitter.send(SseEmitter.event()
+                            .name("status-update")
+                            .data(data));
+                } catch (IOException e) {
+                    removeEmitter(proctorId);
+                }
+            });
         });
     }
 
@@ -168,16 +175,18 @@ public class SseEmitterService {
      * Send heartbeat to keep connections alive
      */
     public void sendHeartbeat() {
-        String heartbeat = "{\"type\":\"heartbeat\",\"timestamp\":" + System.currentTimeMillis() + "}";
-        
-        allEmitters.forEach((proctorId, emitter) -> {
-            try {
-                emitter.send(SseEmitter.event()
-                        .name("heartbeat")
-                        .data(heartbeat));
-            } catch (IOException e) {
-                removeEmitter(proctorId);
-            }
+        sseExecutor.submit(() -> {
+            String heartbeat = "{\"type\":\"heartbeat\",\"timestamp\":" + System.currentTimeMillis() + "}";
+            
+            allEmitters.forEach((proctorId, emitter) -> {
+                try {
+                    emitter.send(SseEmitter.event()
+                            .name("heartbeat")
+                            .data(heartbeat));
+                } catch (IOException e) {
+                    removeEmitter(proctorId);
+                }
+            });
         });
     }
 

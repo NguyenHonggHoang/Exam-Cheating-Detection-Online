@@ -1,15 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { type Incident } from '@/api/incidents';
 
-/**
- * SSE Hook for Real-time Incident Notifications
- * 
- * Connects to incident-service SSE endpoint and receives
- * real-time notifications when new violations are detected.
- * 
- * Usage:
- * const { incidents, isConnected, error } = useIncidentSSE();
- */
 
 interface SSEState {
     incidents: Incident[];

@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package com.examplatform.user.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.examplatform.user.grpc";
+
+service UserGrpcService {
+  rpc CreateUser (CreateUserGrpcRequest) returns (UserGrpcResponse);
+  rpc ListUsers (ListUsersGrpcRequest) returns (ListUsersGrpcResponse);
+}
+
+message CreateUserGrpcRequest {
+  string username = 1;
+  string email = 2;
+  string fullName = 3;
+  string role = 4;
+}
+
+message UserGrpcResponse {
+  string id = 1;
+  string username = 2;
+  string email = 3;
+  string fullName = 4;
+  string role = 5;
+}
+
+message ListUsersGrpcRequest {
+  int32 page = 1;
+  int32 size = 2;
+  string role = 3;
+}
+
+message ListUsersGrpcResponse {
+  repeated UserGrpcResponse users = 1;
+  int32 totalPages = 2;
+  int64 totalElements = 3;
+}

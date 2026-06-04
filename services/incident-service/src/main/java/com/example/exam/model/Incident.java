@@ -28,7 +28,7 @@ import java.util.UUID;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Incident {
+public class Incident implements org.springframework.data.domain.Persistable<UUID> {
     
     @Id
     @Column(name = "id", nullable = false)
@@ -88,5 +88,10 @@ public class Incident {
      */
     public boolean isReviewed() {
         return "REVIEWED".equals(status) || "DISMISSED".equals(status);
+    }
+
+    @Override
+    public boolean isNew() {
+        return true; // We always treat these newly constructed instances as new during enqueue / saveAll
     }
 }

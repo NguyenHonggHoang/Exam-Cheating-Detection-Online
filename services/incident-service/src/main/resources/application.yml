@@ -3,14 +3,32 @@ spring:
     name: incident-service
   
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/incident_db}
-    username: ${SPRING_DATASOURCE_USERNAME:postgres}
-    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    primary:
+      jdbc-url: ${PRIMARY_DB_URL:jdbc:postgresql://localhost:6432/incident_db}
+      username: ${PRIMARY_DB_USERNAME:postgres}
+      password: ${PRIMARY_DB_PASSWORD:postgres}
+      driver-class-name: org.postgresql.Driver
+    replica:
+      jdbc-url: ${REPLICA_DB_URL:jdbc:postgresql://localhost:6432/incident_db}
+      username: ${REPLICA_DB_USERNAME:postgres}
+      password: ${REPLICA_DB_PASSWORD:postgres}
+      driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 100
+      data-source-properties:
+        options: -c TimeZone=UTC
   
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50       # flush saveAll() as single batch INSERT (50 rows per statement)
+          batch_versioned_data: true
+        order_inserts: true    # group inserts by entity type for maximum batching efficiency
+        order_updates: true
   
   flyway:
     enabled: true
@@ -53,9 +71,34 @@ minio:
 
 server:
   port: 8082
+  tomcat:
+    threads:
+      max: 400
+      min-spare: 50
+    accept-count: 500
+    max-connections: 8192
 
 logging:
   level:
-    com.example.exam: DEBUG
+    com.example.exam: INFO
     org.springframework.kafka: INFO
     org.springframework.amqp: INFO
+
+grpc:
+  server:
+    port: ${GRPC_SERVER_PORT:9091}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://tempo-service:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0

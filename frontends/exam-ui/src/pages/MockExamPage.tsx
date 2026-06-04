@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { examsApi } from '@/api/exams';
 import { useSEBContext } from '@/lib/hooks/useSEBContext';
@@ -15,7 +15,6 @@ import { useAIViolationNotifications, type AIViolationNotification } from '@/lib
 import { useWindowMonitor } from '@/lib/hooks/useWindowMonitor';
 import { useAntiScreenshot } from '@/lib/hooks/useAntiScreenshot';
 import { useHeartbeat } from '@/lib/hooks/useHeartbeat';
-import { useIdleDetection } from '@/lib/hooks/useIdleDetection';
 import { usePerQuestionTimer } from '@/lib/hooks/usePerQuestionTimer';
 import { compositeDetector, type CompositeViolation } from '@/lib/utils/compositeViolationDetector';
 import { triggerEgressRecording } from '@/lib/utils/minioUpload';
@@ -30,13 +29,6 @@ import { Textarea } from '@/ui/textarea';
 import { Alert, AlertDescription } from '@/ui/alert';
 import { AlertTriangle, Camera, Clock, Eye, Wifi, WifiOff, XCircle, AlertOctagon, ChevronLeft, ChevronRight, Grid, Check } from 'lucide-react';
 
-/**
- * MockExamPage - STATE-BASED Question Navigation
- * 
- * KEY CHANGE: Uses useState for currentQuestionIndex (NOT URL)
- * This prevents component remount when changing questions
- * and keeps LiveKit connection stable
- */
 export const MockExamPage = () => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
@@ -44,7 +36,6 @@ export const MockExamPage = () => {
 
   const { isInSEB } = useSEBContext();
 
-  // STATE-BASED navigation to prevent remount
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(() => {
     if (examId) {
       const stored = sessionStorage.getItem(`exam_question_index_${examId}`);
@@ -53,20 +44,16 @@ export const MockExamPage = () => {
     return 0;
   });
 
-  // State
-  const [loading, setLoading] = useState(true);  // Only for initial exam load
-  const [isQuestionLoading, setIsQuestionLoading] = useState(false);  // For question navigation (doesn't trigger early return)
+  const [loading, setLoading] = useState(true);
+  const [isQuestionLoading, setIsQuestionLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [examName, setExamName] = useState('');
   const [examDuration, setExamDuration] = useState(45);
   const [examStartedAt, setExamStartedAt] = useState<string | null>(null);
 
-  // Current question data
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [totalQuestions, setTotalQuestions] = useState(0);
 
-  // Answers stored in sessionStorage for persistence across navigation
-  // Initialize from sessionStorage to persist across URL changes
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
     if (examId) {
       const storedAnswers = sessionStorage.getItem(`exam_answers_${examId}`);
@@ -96,12 +83,10 @@ export const MockExamPage = () => {
   } | null>(null);
   const [showWarningOverlay, setShowWarningOverlay] = useState(false);
 
-  // Fullscreen enforcement state
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenRequested, setFullscreenRequested] = useState(false);
   const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(true);
 
-  // Shared stream (single getUserMedia call)
   const { streams, isReady: streamReady, error: streamError, retry: retryStream } = useSharedStream({
     video: {
       width: { ideal: 640 },
@@ -113,12 +98,10 @@ export const MockExamPage = () => {
     enabled: !!sessionId && !submitting
   });
 
-  // LiveKit token
   const { data: livekitData, loading: livekitLoading, error: livekitError } = useLiveKitToken(sessionId);
 
-  // Optimized TensorFlow detection
   const {
-    videoRef,  // Hidden video element ref - REQUIRED for stream
+    videoRef,
     displayCanvasRef,
     inferenceCanvasRef,
     detectionResult,
@@ -126,18 +109,19 @@ export const MockExamPage = () => {
     bufferStatus,
     tfReady,
     error: tfError,
-    preSuspicion, // Destructure preSuspicion
-    captureSnapshot // Destructure captureSnapshot
+    preSuspicion,
+    captureSnapshot,
+    triggerLocalClip
   } = useOptimizedDetection({
     sessionId: sessionId || '',
     stream: streams.tensorflow,
     roomName: (() => {
-      const room = sessionId; // LiveKit room name is sessionId
+      const room = sessionId;
       console.log('[DEBUG] MockExamPage passing roomName to Detect:', room);
       return room || undefined;
     })(),
-    useEgress: true,  // Enable server-side video recording via LiveKit Egress
-    enablePreSuspicion: true, // Enable pre-suspicion detection (phone-prep patterns)
+    useEgress: false,
+    enablePreSuspicion: true,
     enabled: !!sessionId && streamReady && !submitting,
     config: {
       mode: 'balanced',
@@ -146,15 +130,13 @@ export const MockExamPage = () => {
     onViolation: (type, severity) => {
       console.log(`[Detection] Violation state changed: ${type} â†’ ${severity}`);
 
-      // Only add to violation list if severity is WARN or higher
       if (severity !== 'OK') {
         setViolations(prev => {
-          // Avoid duplicates in short time window
           const lastSame = prev.filter(v => v.type === type).slice(-1)[0];
           if (lastSame) {
             const lastTime = new Date(`1970-01-01 ${lastSame.time}`).getTime();
             const now = new Date(`1970-01-01 ${new Date().toLocaleTimeString()}`).getTime();
-            if (now - lastTime < 5000) return prev; // Skip if last same violation < 5s ago
+            if (now - lastTime < 5000) return prev;
           }
           return [...prev, {
             type: type as EventType,
@@ -163,11 +145,8 @@ export const MockExamPage = () => {
         });
       }
 
-      // Show warning overlay for serious violations
-      // Use centralized Vietnamese warning messages
       const message = getViolationWarningMessage(type);
 
-      // Show overlay for WARN, SUSPICIOUS, or ESCALATED
       if (severity !== 'OK') {
         setCurrentViolation({
           type: type as EventType,
@@ -176,14 +155,11 @@ export const MockExamPage = () => {
         });
         setShowWarningOverlay(true);
 
-        // Critical violations (like SCREENSHOT_ATTEMPT) should stay visible until acknowledged
-        // NO_FACE should stay visible until camera is back (no auto-hide)
-        // Other violations auto-hide based on severity
+
         if (type !== 'NO_FACE' && !isCriticalViolation(type)) {
           const hideDelay = severity === 'WARN' ? 3000 : severity === 'SUSPICIOUS' ? 5000 : 0;
           if (hideDelay > 0) {
             setTimeout(() => {
-              // Only hide if still showing this same violation
               setCurrentViolation(prev => {
                 if (prev?.type === type) {
                   setShowWarningOverlay(false);
@@ -194,8 +170,6 @@ export const MockExamPage = () => {
             }, hideDelay);
           }
         }
-        // For NO_FACE at ESCALATED level, warning stays until face is detected
-        // For critical violations, warning stays until acknowledged
       }
     },
     onEvidenceUploaded: (type, url) => {
@@ -208,14 +182,12 @@ export const MockExamPage = () => {
 
 
 
-  // Answer behavior tracking for pattern analysis
   const answerBehavior = useAnswerBehavior({
     sessionId: sessionId || '',
     examId: examId || '',
     enabled: !!sessionId && !submitting,
     onAnomalyDetected: (anomalies: BehaviorAnomaly[]) => {
       console.log('[AnswerBehavior] Anomalies detected:', anomalies);
-      // Report medium and high severity anomalies to proctor
       const reportableAnomalies = anomalies.filter(a => a.severity === 'high' || a.severity === 'medium');
       if (reportableAnomalies.length > 0 && sessionId) {
         incidentsApi.sendClientEvent({
@@ -235,7 +207,6 @@ export const MockExamPage = () => {
     },
     onRiskScoreChange: (score: number) => {
       console.log('[AnswerBehavior] Risk score changed:', score);
-      // Report significant risk score changes (above 50%) to proctor
       if (score >= 50 && sessionId) {
         incidentsApi.sendClientEvent({
           sessionId,
@@ -252,19 +223,23 @@ export const MockExamPage = () => {
 
 
 
-  // Anti-Screenshot Protection
   useAntiScreenshot({
     enabled: !!sessionId,
     onScreenshotAttempt: () => {
       console.warn('[Security] Screenshot attempt detected');
 
-      // Show warning overlay with Vietnamese message
       setCurrentViolation({
         type: 'SCREENSHOT_ATTEMPT' as EventType,
         severity: 'HIGH',
         message: getViolationWarningMessage('SCREENSHOT_ATTEMPT')
       });
       setShowWarningOverlay(true);
+
+      // Add to violations list
+      setViolations(prev => [...prev, {
+        type: 'SCREENSHOT_ATTEMPT' as EventType,
+        time: new Date().toLocaleTimeString()
+      }]);
 
       // Report incident
       if (sessionId) {
@@ -278,14 +253,10 @@ export const MockExamPage = () => {
         }).catch(err => console.error('Failed to report screenshot attempt:', err));
       }
 
-      // Critical violations stay visible until acknowledged (no auto-hide)
     }
   });
 
-  // Idle Detection removed as per user request
-  // const idle = useIdleDetection({ ... });
 
-  // Session Heartbeat
   useHeartbeat({
     sessionId: sessionId || '',
     enabled: !!sessionId,
@@ -298,43 +269,34 @@ export const MockExamPage = () => {
     }
   });
 
-  // Track question start times in a ref to persist across re-renders
   const questionStartTimes = useRef<{ [key: string]: number }>({});
 
-  // Initialize start time for current question if not exists
   if (currentQuestion && !questionStartTimes.current[currentQuestion.id]) {
     questionStartTimes.current[currentQuestion.id] = Date.now();
   }
 
-  // Per-Question Timer (Default 5 minutes heuristic since data lacks limits)
   const questionTimer = usePerQuestionTimer({
     enabled: !!currentQuestion && !loading,
-    timeLimitSeconds: 300, // 5 minutes soft limit
+    timeLimitSeconds: 300,
     startedAtEpochMs: currentQuestion ? (questionStartTimes.current[currentQuestion.id] || Date.now()) : Date.now(),
     onTimeUp: () => {
-      // Soft warning only
       if (currentQuestionIndex === totalQuestions - 1) return;
       console.log('[Timer] Question time soft limit reached');
     }
   });
 
-  // Track typing speed
   const lastTypingRef = useRef<{ [key: string]: { time: number; length: number } }>({});
 
-  // Track pre-suspicion flag for each question
   const preSuspicionDuringCurrentRef = useRef<boolean>(false);
 
-  // Auto-hide warning when face is back or looking straight
   useEffect(() => {
     if (!detectionResult || !currentViolation) return;
 
-    // If current violation is NO_FACE and face is back
     if (currentViolation.type === 'NO_FACE' && detectionResult.faceCount === 1) {
       setShowWarningOverlay(false);
       setCurrentViolation(null);
     }
 
-    // If current violation is LOOKING_AWAY and now looking straight
     if (currentViolation.type === 'LOOKING_AWAY' && detectionResult.headPose) {
       const { pitch, yaw } = detectionResult.headPose;
       if (Math.abs(pitch) < 20 && Math.abs(yaw) < 25) {
@@ -344,7 +306,6 @@ export const MockExamPage = () => {
     }
   }, [detectionResult, currentViolation]);
 
-  // Fullscreen enforcement - request fullscreen when exam loads
   useEffect(() => {
     if (loading || !sessionId || submitting) return;
 
@@ -364,11 +325,9 @@ export const MockExamPage = () => {
         console.log('[Fullscreen] Entered fullscreen mode');
       } catch (err) {
         console.warn('[Fullscreen] Could not enter fullscreen:', err);
-        // Will show prompt to user
       }
     };
 
-    // Fullscreen change handler
     const handleFullscreenChange = () => {
       const isNowFullscreen = !!document.fullscreenElement;
       setIsFullscreen(isNowFullscreen);
@@ -376,7 +335,6 @@ export const MockExamPage = () => {
       if (!isNowFullscreen && fullscreenRequested && !submitting) {
         console.warn('[Fullscreen] User exited fullscreen - violation!');
 
-        // Record violation
         setCurrentViolation({
           type: 'BLUR' as EventType,
           severity: 'SUSPICIOUS',
@@ -385,7 +343,6 @@ export const MockExamPage = () => {
         setShowWarningOverlay(true);
         setShowFullscreenPrompt(true);
 
-        // Record event for composite detection
         compositeDetector.recordEvent('FULLSCREEN_EXIT');
 
         setViolations(prev => [...prev, {
@@ -393,7 +350,6 @@ export const MockExamPage = () => {
           time: new Date().toLocaleTimeString()
         }]);
 
-        // Send to backend
         if (sessionId) {
           incidentsApi.sendClientEvent({
             sessionId,
@@ -406,7 +362,6 @@ export const MockExamPage = () => {
       }
     };
 
-    // Auto-request fullscreen on load (after a short delay)
     const timeout = setTimeout(() => {
       if (!document.fullscreenElement) {
         requestFullscreen();
@@ -421,7 +376,6 @@ export const MockExamPage = () => {
     };
   }, [loading, sessionId, fullscreenRequested, submitting]);
 
-  // Function to request fullscreen (for UI button)
   const enterFullscreen = async () => {
     const elem = document.documentElement;
     try {
@@ -665,16 +619,32 @@ export const MockExamPage = () => {
 
       // Report as violation - use Vietnamese message
       setCurrentViolation({
-        type: 'TAB_SWITCH' as EventType, // Map to existing high-severity type
+        type: 'WINDOW_RESIZE' as EventType, // Corrected type
         severity: 'SUSPICIOUS',
         message: getViolationWarningMessage('WINDOW_RESIZE')
       });
       setShowWarningOverlay(true);
 
       setViolations(prev => [...prev, {
-        type: 'TAB_SWITCH' as EventType, // Track as TAB_SWITCH for visibility
+        type: 'WINDOW_RESIZE' as EventType, // Corrected type
         time: new Date().toLocaleTimeString()
       }]);
+
+      // Send to Incident Service
+      if (sessionId) {
+        incidentsApi.sendClientEvent({
+          sessionId,
+          eventType: 'WINDOW_RESIZE', // Explicit event type
+          violationType: 'BEHAVIOR_ANALYSIS' as any,
+          violationState: 'SUSPICIOUS',
+          timestamp: Date.now(),
+          source: 'WINDOW_MONITOR',
+          metadata: {
+            widthRatio: violation.state.widthRatio,
+            heightRatio: violation.state.heightRatio
+          }
+        }).catch(err => console.error('Failed to report window resize:', err));
+      }
     }
   });
 
@@ -771,7 +741,8 @@ export const MockExamPage = () => {
           currentQuestion.id,
           currentQuestionIndex,
           difficulty,
-          currentAns
+          currentAns,
+          preSuspicion?.temporal?.getAverageTypingSpeed?.() || 0
         );
       }
     }
@@ -1022,21 +993,12 @@ export const MockExamPage = () => {
         }
       }).catch(err => console.error('Failed to report composite violation:', err));
 
-      // Trigger Egress recording for HIGH/CRITICAL composite patterns
-      if ((violation.severity === 'HIGH' || violation.severity === 'CRITICAL') && livekitData?.roomName) {
-        console.log(`[CompositeDetector] 📹 Triggering Egress recording for ${violation.pattern}`);
-        triggerEgressRecording({
-          sessionId,
-          roomName: livekitData.roomName,
-          violationType: violation.pattern,
-          durationSeconds: 15 // Record 15 seconds for composite patterns
-        }).then(result => {
-          if (result.success) {
-            console.log(`[CompositeDetector] ✅ Egress started: ${result.egressId}`);
-          } else {
-            console.warn(`[CompositeDetector] ❌ Egress failed: ${result.error}`);
-          }
-        }).catch(err => console.error('Failed to trigger Egress for composite:', err));
+      // Trigger client-side circular recording for HIGH/CRITICAL composite patterns instead of Egress
+      if (violation.severity === 'HIGH' || violation.severity === 'CRITICAL') {
+        console.log(`[CompositeDetector] 📹 Triggering client-side circular recording for ${violation.pattern}`);
+        triggerLocalClip(violation.pattern as any).then(() => {
+          console.log(`[CompositeDetector] ✅ Client-side clip triggered successfully`);
+        }).catch(err => console.error('Failed to trigger local clip for composite:', err));
       }
 
       // Show critical warning for high-confidence patterns
@@ -1081,7 +1043,8 @@ export const MockExamPage = () => {
             currentQuestion.id,
             currentQuestionIndex,
             difficulty,
-            currentAnswer
+            currentAnswer,
+            preSuspicion?.temporal?.getAverageTypingSpeed?.() || 0
           );
         }
       }
@@ -1312,17 +1275,17 @@ export const MockExamPage = () => {
               )}
             </div>
 
-            <h2 className={`text-2xl font-bold mb-2 ${currentViolation.severity === 'ESCALATED'
+            <h2 className={`text-2xl font-bold mb-2 ${currentViolation.severity === 'ESCALATED' || currentViolation.severity === 'HIGH'
               ? 'text-red-600'
               : currentViolation.severity === 'SUSPICIOUS'
                 ? 'text-orange-600'
                 : 'text-yellow-600'
               }`}>
-              {currentViolation.severity === 'ESCALATED'
-                ? 'SERIOUS VIOLATION'
+              {currentViolation.severity === 'ESCALATED' || currentViolation.severity === 'HIGH'
+                ? 'VI PHẠM NGHIÊM TRỌNG'
                 : currentViolation.severity === 'SUSPICIOUS'
-                  ? 'Warning'
-                  : 'Caution'}
+                  ? 'Cảnh Báo'
+                  : 'Lưu Ý'}
             </h2>
 
             <p className="text-gray-700 text-lg mb-4">
@@ -1331,12 +1294,12 @@ export const MockExamPage = () => {
 
             <p className="text-sm text-gray-500 mb-6">
               {currentViolation.type === 'NO_FACE'
-                ? 'Please enable your camera and face it to continue the exam.'
-                : currentViolation.severity === 'ESCALATED'
-                  ? 'This incident has been recorded. Repeated violations may result in exam termination.'
+                ? 'Vui lòng bật camera và để khuôn mặt vào giữa khung hình.'
+                : (currentViolation.severity === 'ESCALATED' || currentViolation.severity === 'HIGH')
+                  ? 'Vi phạm này đã được ghi lại. Nếu tái phạm bài thi có thể bị hủy.'
                   : currentViolation.severity === 'SUSPICIOUS'
-                    ? 'Please correct this immediately to continue.'
-                    : 'This warning will disappear shortly.'}
+                    ? 'Vui lòng khắc phục ngay lập tức để tiếp tục.'
+                    : 'Cảnh báo này sẽ tự tắt.'}
             </p>
 
             {/* NO_FACE - Cannot dismiss, must fix camera */}
@@ -1351,21 +1314,21 @@ export const MockExamPage = () => {
               </div>
             )}
 
-            {/* Acknowledge button for SUSPICIOUS and ESCALATED (except NO_FACE) */}
+            {/* Acknowledge button for SUSPICIOUS and ESCALATED and HIGH (except NO_FACE) */}
             {currentViolation.type !== 'NO_FACE' &&
-              (currentViolation.severity === 'SUSPICIOUS' || currentViolation.severity === 'ESCALATED') && (
+              (currentViolation.severity === 'SUSPICIOUS' || currentViolation.severity === 'ESCALATED' || currentViolation.severity === 'HIGH') && (
                 <Button
                   onClick={() => {
                     setShowWarningOverlay(false);
                     setCurrentViolation(null);
                   }}
                   className={
-                    currentViolation.severity === 'ESCALATED'
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-orange-600 hover:bg-orange-700'
+                    currentViolation.severity === 'ESCALATED' || currentViolation.severity === 'HIGH'
+                      ? 'bg-red-600 hover:bg-red-700 text-white w-full'
+                      : 'bg-orange-600 hover:bg-orange-700 text-white w-full'
                   }
                 >
-                  I Understand
+                  Đã hiểu, tôi sẽ không tái phạm
                 </Button>
               )}
 
@@ -1575,7 +1538,7 @@ export const MockExamPage = () => {
                 <strong>Warning:</strong> {violations.length} violation(s) detected
               </div>
               <div className="flex gap-2 mt-2 flex-wrap">
-                {['TAB_SWITCH', 'PASTE', 'MULTIPLE_FACES', 'NO_FACE', 'LOOKING_AWAY', 'BLUR', 'FOCUS', 'SCREENSHOT_ATTEMPT', 'PHONE_DETECTED', 'BROWSER_EXTENSION'].map(type => {
+                {['TAB_SWITCH', 'PASTE', 'MULTIPLE_FACES', 'NO_FACE', 'LOOKING_AWAY', 'BLUR', 'FOCUS', 'SCREENSHOT_ATTEMPT', 'PHONE_DETECTED', 'BROWSER_EXTENSION', 'WINDOW_RESIZE'].map(type => {
                   const count = violations.filter(v => v.type === type).length;
                   if (count === 0) return null;
 
@@ -1589,7 +1552,8 @@ export const MockExamPage = () => {
                     FOCUS: 'bg-blue-100 text-blue-800',
                     SCREENSHOT_ATTEMPT: 'bg-red-100 text-red-800',
                     PHONE_DETECTED: 'bg-red-100 text-red-800',
-                    BROWSER_EXTENSION: 'bg-orange-100 text-orange-800'
+                    BROWSER_EXTENSION: 'bg-orange-100 text-orange-800',
+                    WINDOW_RESIZE: 'bg-yellow-100 text-yellow-800'
                   };
 
                   return (

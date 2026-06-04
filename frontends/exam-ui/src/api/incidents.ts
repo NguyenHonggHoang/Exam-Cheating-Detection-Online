@@ -38,7 +38,7 @@ export interface Incident {
   reviewedBy?: string;
   consecutiveCount?: number;
   firstDetectedAt?: string;
-  metadata?: Record<string, any>; // Flexible metadata for detailed analysis
+  metadata?: Record<string, any>;
 }
 
 export interface IncidentDetailed extends Incident {
@@ -81,17 +81,7 @@ export interface CreateReviewRequest {
   notes?: string;
 }
 
-/**
- * Incident Service API
- * 
- * Endpoints moved from Session Service to Incident Service
- */
 export const incidentsApi = {
-  /**
-   * List incidents with filtering and pagination
-   * 
-   * @param params Filter parameters
-   */
   async list(params?: {
     sessionId?: string;
     examId?: string;
@@ -101,7 +91,6 @@ export const incidentsApi = {
     size?: number;
     sort?: string;
   }): Promise<PaginatedIncidents> {
-    // Use proxy endpoint - BFF handles routing to incident-service
     const response = await axiosInstance.get<PaginatedIncidents>('/incidents', { params });
     return response.data;
   },
@@ -178,13 +167,11 @@ export const incidentsApi = {
     };
     consecutiveCount?: number;
     firstDetectedAt?: number;
-    metadata?: Record<string, unknown>;  // Additional metadata (e.g., egress info)
+    metadata?: Record<string, unknown>;
   }): Promise<void> {
-    // Use proxy endpoint - BFF handles routing to incident-service
     await axiosInstance.post('/incident/client-event', event);
   }
 };
 
-// Legacy export for backward compatibility
 export const getIncidentsBySession = (sessionId: string) =>
   incidentsApi.list({ sessionId });
