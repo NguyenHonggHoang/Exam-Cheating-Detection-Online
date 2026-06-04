@@ -56,12 +56,8 @@
           <boolProp name="CookieManager.controlledByThreadGroup">false</boolProp>
         </CookieManager>
         <hashTree/>
-        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Global Header Manager" enabled="true">
           <collectionProp name="HeaderManager.headers">
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Content-Type</stringProp>
-              <stringProp name="Header.value">application/json</stringProp>
-            </elementProp>
             <elementProp name="" elementType="Header">
               <stringProp name="Header.name">Accept</stringProp>
               <stringProp name="Header.value">application/json</stringProp>
@@ -128,7 +124,17 @@ vars.put("STATE", UUID.randomUUID().toString())
               </collectionProp>
             </elementProp>
           </HTTPSamplerProxy>
-          <hashTree/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="2. GET /login (Extract CSRF)" enabled="true">
             <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
             <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
@@ -177,14 +183,18 @@ vars.put("STATE", UUID.randomUUID().toString())
                 </elementProp>
               </collectionProp>
             </elementProp>
-            <stringProp name="HeaderManager.headers">
-              <elementProp name="Content-Type" elementType="Header">
-                <stringProp name="Header.name">Content-Type</stringProp>
-                <stringProp name="Header.value">application/x-www-form-urlencoded</stringProp>
-              </elementProp>
-            </stringProp>
           </HTTPSamplerProxy>
-          <hashTree/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/x-www-form-urlencoded</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="4. GET /oauth2/authorize (Obtain Auth Code)" enabled="true">
             <stringProp name="HTTPSampler.domain">${AUTH_HOST}</stringProp>
             <stringProp name="HTTPSampler.port">${AUTH_PORT}</stringProp>
@@ -284,18 +294,21 @@ vars.put("STATE", UUID.randomUUID().toString())
                 </elementProp>
               </collectionProp>
             </elementProp>
-            <stringProp name="HeaderManager.headers">
-              <elementProp name="Content-Type" elementType="Header">
-                <stringProp name="Header.name">Content-Type</stringProp>
-                <stringProp name="Header.value">application/x-www-form-urlencoded</stringProp>
-              </elementProp>
-              <elementProp name="Authorization" elementType="Header">
-                <stringProp name="Header.name">Authorization</stringProp>
-                <stringProp name="Header.value">Basic ZXhhbS1iZmYtY2xpZW50OmV4YW0tYmZmLXNlY3JldA==</stringProp>
-              </elementProp>
-            </stringProp>
           </HTTPSamplerProxy>
           <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/x-www-form-urlencoded</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Basic ZXhhbS1iZmYtY2xpZW50OmV4YW0tYmZmLXNlY3JldA==</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
             <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="JSON Extractor Access Token" enabled="true">
               <stringProp name="JSONPostProcessor.referenceNames">ACCESS_TOKEN</stringProp>
               <stringProp name="JSONPostProcessor.jsonPathExprs">$.access_token</stringProp>
@@ -312,14 +325,18 @@ vars.put("STATE", UUID.randomUUID().toString())
             <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
               <collectionProp name="Arguments.arguments"/>
             </elementProp>
-            <stringProp name="HeaderManager.headers">
-              <elementProp name="Authorization" elementType="Header">
-                <stringProp name="Header.name">Authorization</stringProp>
-                <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
-              </elementProp>
-            </stringProp>
           </HTTPSamplerProxy>
-          <hashTree/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="7. POST /api/proxy/mock-exam/start" enabled="true">
             <stringProp name="HTTPSampler.path">/api/proxy/mock-exam/start</stringProp>
             <stringProp name="HTTPSampler.method">POST</stringProp>
@@ -334,14 +351,21 @@ vars.put("STATE", UUID.randomUUID().toString())
                 </elementProp>
               </collectionProp>
             </elementProp>
-            <stringProp name="HeaderManager.headers">
-              <elementProp name="Authorization" elementType="Header">
-                <stringProp name="Header.name">Authorization</stringProp>
-                <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
-              </elementProp>
-            </stringProp>
           </HTTPSamplerProxy>
           <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
             <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="JSON Extractor Session ID" enabled="true">
               <stringProp name="JSONPostProcessor.referenceNames">SESSION_ID</stringProp>
               <stringProp name="JSONPostProcessor.jsonPathExprs">$.sessionId</stringProp>
@@ -356,14 +380,17 @@ vars.put("STATE", UUID.randomUUID().toString())
             <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" enabled="true">
               <collectionProp name="Arguments.arguments"/>
             </elementProp>
-            <stringProp name="HeaderManager.headers">
-              <elementProp name="Authorization" elementType="Header">
-                <stringProp name="Header.name">Authorization</stringProp>
-                <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
-              </elementProp>
-            </stringProp>
           </HTTPSamplerProxy>
           <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
             <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="JSON Extractor Question ID" enabled="true">
               <stringProp name="JSONPostProcessor.referenceNames">QUESTION_ID</stringProp>
               <stringProp name="JSONPostProcessor.jsonPathExprs">$.questions[0].id</stringProp>
@@ -392,14 +419,22 @@ vars.put("STATE", UUID.randomUUID().toString())
                 </elementProp>
               </collectionProp>
             </elementProp>
-            <stringProp name="HeaderManager.headers">
-              <elementProp name="Authorization" elementType="Header">
-                <stringProp name="Header.name">Authorization</stringProp>
-                <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
-              </elementProp>
-            </stringProp>
           </HTTPSamplerProxy>
-          <hashTree/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="10. POST /api/proxy/incident/client-event (Telemetry)" enabled="true">
             <stringProp name="HTTPSampler.path">/api/proxy/incident/client-event</stringProp>
             <stringProp name="HTTPSampler.method">POST</stringProp>
@@ -421,14 +456,22 @@ vars.put("STATE", UUID.randomUUID().toString())
                 </elementProp>
               </collectionProp>
             </elementProp>
-            <stringProp name="HeaderManager.headers">
-              <elementProp name="Authorization" elementType="Header">
-                <stringProp name="Header.name">Authorization</stringProp>
-                <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
-              </elementProp>
-            </stringProp>
           </HTTPSamplerProxy>
-          <hashTree/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${ACCESS_TOKEN}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
         </hashTree>
         <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
@@ -436,7 +479,7 @@ vars.put("STATE", UUID.randomUUID().toString())
             <name>saveConfig</name>
             <value class="SampleSaveConfiguration">
               <time>true</time>
-              <latency>true</latency>
+              <lazy>true</lazy>
               <timestamp>true</timestamp>
               <success>true</success>
               <label>true</label>

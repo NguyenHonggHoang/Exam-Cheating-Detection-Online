@@ -359,6 +359,8 @@ coverage/
 test-results/
 playwright-report/
 playwright/.cache/
+tests/jmeter/results.jtl
+tests/jmeter/reports/
 
 # ==========================================
 # Logs and Temporary Files
