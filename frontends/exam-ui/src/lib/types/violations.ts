@@ -63,8 +63,8 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
     suspiciousThreshold: 3,
 
     snapshotDelay: 1000,            // 1 second
-    clipPreBuffer: 10,              // 10 seconds
-    clipPostBuffer: 10,             // 10 seconds
+    clipPreBuffer: 2,               // 2 seconds
+    clipPostBuffer: 3,              // 3 seconds
 
     maxSnapshotsPerMinute: 5,
     maxClipsPerMinute: 2,

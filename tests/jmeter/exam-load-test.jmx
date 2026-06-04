@@ -209,12 +209,14 @@ vars.put("STATE", UUID.randomUUID().toString())
                   <stringProp name="Argument.value">openid profile</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                   <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                  <boolProp name="HTTPArgument.always_encode">true</boolProp>
                 </elementProp>
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <stringProp name="Argument.name">redirect_uri</stringProp>
                   <stringProp name="Argument.value">http://localhost:8080/login/oauth2/code/exam-oidc</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                   <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                  <boolProp name="HTTPArgument.always_encode">true</boolProp>
                 </elementProp>
                 <elementProp name="code_challenge" elementType="HTTPArgument">
                   <stringProp name="Argument.name">code_challenge</stringProp>
