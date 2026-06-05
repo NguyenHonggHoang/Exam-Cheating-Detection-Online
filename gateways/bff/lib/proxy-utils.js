@@ -1,3 +1,7 @@
+console.log = () => {};
+console.warn = () => {};
+console.error = () => {};
+
 import { Readable } from 'stream';
 import { Agent, setGlobalDispatcher } from 'undici';
 

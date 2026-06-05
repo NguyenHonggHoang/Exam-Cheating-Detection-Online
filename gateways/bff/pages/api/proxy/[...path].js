@@ -1,3 +1,7 @@
+console.log = () => {};
+console.warn = () => {};
+console.error = () => {};
+
 import { getToken } from 'next-auth/jwt';
 import { proxyRequest } from '../../../lib/proxy-utils';
 
